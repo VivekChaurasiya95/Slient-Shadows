@@ -33,6 +33,11 @@ class HorrorGame {
     this.velocity = new THREE.Vector3();
     this.keys = {};
     this.headBobTimer = 0;
+    this.camHeight = this.playerHeight;
+    this.bobAmp = 0;
+    this.flicker = [];
+    this.activeRoom = null;
+    this.currentInteractable = null;
 
     // Room Enclosure & Interactive Meshes
     this.roomSpheres = {};
@@ -96,339 +101,827 @@ class HorrorGame {
   // ------------------------------------------------------------------------
   initThree() {
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
+    this.scene.background = new THREE.Color(0x030203);
+    this.scene.fog = new THREE.FogExp2(0x060508, 0.07);
+
+    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.05, 80);
     this.camera.position.set(0, this.playerHeight, 0);
     this.scene.add(this.camera);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.35;
+    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
-    // Dynamic Flashlight attached to camera
-    this.flashlight = new THREE.SpotLight(0xfff5ea, 5.5, 50, Math.PI / 3.4, 0.35, 1.1);
-    this.flashlight.position.set(0.15, -0.15, 0.1);
+    // Flashlight: a narrow, shadow casting cone that sways slightly with the head
+    this.flashlightBase = 2.8;
+    this.flashlight = new THREE.SpotLight(0xfff1dc, this.flashlightBase, 24, Math.PI / 6, 0.55, 1.3);
+    this.flashlight.position.set(0.18, -0.16, 0);
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(1024, 1024);
+    this.flashlight.shadow.camera.near = 0.1;
+    this.flashlight.shadow.camera.far = 24;
+    this.flashlight.shadow.bias = -0.0004;
     this.flashlightTarget = new THREE.Object3D();
     this.flashlightTarget.position.set(0, 0, -8);
     this.camera.add(this.flashlight);
     this.camera.add(this.flashlightTarget);
     this.flashlight.target = this.flashlightTarget;
 
-    // Soft Proximity Fill Light (illuminates floor and immediate surroundings)
-    this.playerFillLight = new THREE.PointLight(0xffeedd, 1.8, 12, 1.8);
+    // Faint glow around the player so nearby floor never goes fully black
+    this.fillOn = 0.5;
+    this.fillOff = 0.12;
+    this.playerFillLight = new THREE.PointLight(0xffe2c0, this.fillOn, 7, 2);
     this.camera.add(this.playerFillLight);
 
-    // Ambient Lighting
-    this.ambientLight = new THREE.AmbientLight(0x505870, 1.2);
+    this.ambientLight = new THREE.AmbientLight(0x505870, 0.4);
     this.scene.add(this.ambientLight);
 
     this.initParticleSystems();
   }
 
   initParticleSystems() {
-    // 1. Dust motes in Corridor
-    const dustCount = 180;
-    const dustGeo = new THREE.BufferGeometry();
+    // Dust drifts in a box that follows the player, so every room feels like it has air in it
+    const dustCount = 160;
     const dustPos = new Float32Array(dustCount * 3);
     for (let i = 0; i < dustCount * 3; i += 3) {
-      dustPos[i] = (Math.random() - 0.5) * 16;
-      dustPos[i + 1] = Math.random() * 5;
-      dustPos[i + 2] = (Math.random() - 0.5) * 16;
+      dustPos[i] = (Math.random() - 0.5) * 8;
+      dustPos[i + 1] = Math.random() * 3;
+      dustPos[i + 2] = (Math.random() - 0.5) * 8;
     }
+    const dustGeo = new THREE.BufferGeometry();
     dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
     this.dustParticles = new THREE.Points(
       dustGeo,
-      new THREE.PointsMaterial({ color: 0xcccccc, size: 0.05, transparent: true, opacity: 0.4 })
+      new THREE.PointsMaterial({ color: 0xd9d2c4, size: 0.025, transparent: true, opacity: 0.35, depthWrite: false })
     );
+    this.dustParticles.frustumCulled = false;
     this.scene.add(this.dustParticles);
-
-    // 2. Fire embers in Parlor
-    const emberCount = 80;
-    const emberGeo = new THREE.BufferGeometry();
-    const emberPos = new Float32Array(emberCount * 3);
-    for (let i = 0; i < emberCount * 3; i += 3) {
-      emberPos[i] = -4 + (Math.random() - 0.5) * 3;
-      emberPos[i + 1] = Math.random() * 3;
-      emberPos[i + 2] = -4 + (Math.random() - 0.5) * 3;
-    }
-    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
-    this.fireEmbers = new THREE.Points(
-      emberGeo,
-      new THREE.PointsMaterial({ color: 0xff6600, size: 0.08, transparent: true, opacity: 0.8 })
-    );
-    this.fireEmbers.visible = false;
-    this.scene.add(this.fireEmbers);
-
-    // 3. Green supernatural smoke in Crypt
-    const greenCount = 100;
-    const greenGeo = new THREE.BufferGeometry();
-    const greenPos = new Float32Array(greenCount * 3);
-    for (let i = 0; i < greenCount * 3; i += 3) {
-      greenPos[i] = (Math.random() - 0.5) * 6;
-      greenPos[i + 1] = -0.5 + Math.random() * 2.5;
-      greenPos[i + 2] = -5 + (Math.random() - 0.5) * 6;
-    }
-    greenGeo.setAttribute('position', new THREE.BufferAttribute(greenPos, 3));
-    this.greenSmoke = new THREE.Points(
-      greenGeo,
-      new THREE.PointsMaterial({ color: 0x39ff14, size: 0.12, transparent: true, opacity: 0.7 })
-    );
-    this.greenSmoke.visible = false;
-    this.scene.add(this.greenSmoke);
   }
 
   // ------------------------------------------------------------------------
-  // 2. Build High-Fidelity Photographic Room Chambers
+  // 2. Procedural Textures
   // ------------------------------------------------------------------------
-  buildImmersiveRooms() {
-    const texLoader = new THREE.TextureLoader();
+  makeTexture(size, draw, repX = 1, repY = 1) {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    draw(c.getContext('2d'), size);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repX, repY);
+    t.encoding = THREE.sRGBEncoding;
+    t.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    return t;
+  }
 
-    // Load the 4 exact photographic room assets
-    const textures = {
-      corridor: texLoader.load('assets/room_corridor.jpg'),
-      bedroom: texLoader.load('assets/room_bedroom.jpg'),
-      parlor: texLoader.load('assets/room_parlor.jpg'),
-      crypt: texLoader.load('assets/room_crypt.jpg')
+  speckle(g, s, count, alpha, light = false) {
+    for (let i = 0; i < count; i++) {
+      const v = light ? 255 : 0;
+      g.fillStyle = `rgba(${v},${v},${v},${Math.random() * alpha})`;
+      const r = Math.random() * 2 + 0.5;
+      g.fillRect(Math.random() * s, Math.random() * s, r, r);
+    }
+  }
+
+  stains(g, s, count, strength) {
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * s, y = Math.random() * s, r = 30 + Math.random() * 90;
+      const grad = g.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(0,0,0,${strength})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+  }
+
+  texWood(hue = 26) {
+    return this.makeTexture(512, (g, s) => {
+      const n = 8, w = s / n;
+      for (let i = 0; i < n; i++) {
+        g.fillStyle = `hsl(${hue + Math.random() * 6},${30 + Math.random() * 10}%,${11 + Math.random() * 7}%)`;
+        g.fillRect(i * w, 0, w, s);
+        for (let k = 0; k < 26; k++) {
+          g.strokeStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.12})`;
+          g.lineWidth = Math.random() * 1.6 + 0.4;
+          const x = i * w + Math.random() * w;
+          g.beginPath();
+          g.moveTo(x, 0);
+          g.bezierCurveTo(x + 4, s * 0.3, x - 4, s * 0.7, x + 2, s);
+          g.stroke();
+        }
+        g.fillStyle = 'rgba(0,0,0,0.65)';
+        g.fillRect(i * w, 0, 2, s);
+        const cut = Math.random() * s;
+        g.fillRect(i * w, cut, w, 2);
+      }
+      this.stains(g, s, 8, 0.28);
+      this.speckle(g, s, 1400, 0.25);
+    });
+  }
+
+  texWall(o) {
+    const [h, sat, l] = o.base;
+    return this.makeTexture(512, (g, s) => {
+      const panelH = Math.round(s * 0.32);
+      const top = s - panelH;
+      g.fillStyle = `hsl(${h},${sat}%,${l}%)`;
+      g.fillRect(0, 0, s, s);
+      for (let x = 0; x < s; x += 32) {
+        g.fillStyle = `hsla(${h},${sat}%,${l + 5}%,0.55)`;
+        g.fillRect(x, 0, 14, top);
+      }
+      g.fillStyle = `hsla(${h},${sat}%,${l + 9}%,0.22)`;
+      for (let y = 24; y < top; y += 48) {
+        for (let x = 16; x < s; x += 32) {
+          g.beginPath();
+          g.moveTo(x, y - 8); g.lineTo(x + 6, y); g.lineTo(x, y + 8); g.lineTo(x - 6, y);
+          g.fill();
+        }
+      }
+      if (o.peel) {
+        for (let i = 0; i < 9; i++) {
+          const x = Math.random() * s, y = Math.random() * top, r = 24 + Math.random() * 60;
+          g.fillStyle = `hsla(${h + 10},12%,${l + 14}%,0.55)`;
+          g.beginPath();
+          for (let a = 0; a < 7; a++) {
+            const ang = (a / 7) * Math.PI * 2, rr = r * (0.55 + Math.random() * 0.6);
+            g.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr * 0.7);
+          }
+          g.fill();
+        }
+      }
+      const gt = g.createLinearGradient(0, 0, 0, top);
+      gt.addColorStop(0, 'rgba(0,0,0,0.55)');
+      gt.addColorStop(0.25, 'rgba(0,0,0,0)');
+      g.fillStyle = gt;
+      g.fillRect(0, 0, s, top);
+      this.stains(g, s, 12, 0.3);
+
+      // Wood wainscot
+      const [ph, ps, pl] = o.panel;
+      g.fillStyle = `hsl(${ph},${ps}%,${pl}%)`;
+      g.fillRect(0, top, s, panelH);
+      for (let i = 0; i < 2; i++) {
+        const px = i * 256 + 28, py = top + 26, pw = 200, phh = panelH - 46;
+        g.fillStyle = 'rgba(0,0,0,0.35)';
+        g.fillRect(px, py, pw, phh);
+        g.strokeStyle = 'rgba(255,255,255,0.1)';
+        g.lineWidth = 2;
+        g.strokeRect(px + 1, py + 1, pw - 2, phh - 2);
+      }
+      g.fillStyle = `hsl(${ph},${ps}%,${pl + 5}%)`;
+      g.fillRect(0, top - 4, s, 8);
+      g.fillStyle = 'rgba(0,0,0,0.5)';
+      g.fillRect(0, top + 4, s, 3);
+      const gb = g.createLinearGradient(0, s - 70, 0, s);
+      gb.addColorStop(0, 'rgba(0,0,0,0)');
+      gb.addColorStop(1, 'rgba(0,0,0,0.6)');
+      g.fillStyle = gb;
+      g.fillRect(0, s - 70, s, 70);
+      this.speckle(g, s, 2200, 0.22);
+    });
+  }
+
+  texStone() {
+    return this.makeTexture(512, (g, s) => {
+      g.fillStyle = '#15171a';
+      g.fillRect(0, 0, s, s);
+      const rows = 8, bh = s / rows;
+      for (let r = 0; r < rows; r++) {
+        const cols = 3, bw = s / cols, off = (r % 2) * (bw / 2);
+        for (let c = -1; c <= cols; c++) {
+          const x = c * bw + off, v = 20 + Math.random() * 14;
+          g.fillStyle = `hsl(${150 + Math.random() * 30},${6 + Math.random() * 6}%,${v}%)`;
+          g.fillRect(x + 3, r * bh + 3, bw - 6, bh - 6);
+          for (let k = 0; k < 4; k++) {
+            g.strokeStyle = `rgba(0,0,0,${Math.random() * 0.3})`;
+            g.beginPath();
+            g.moveTo(x + Math.random() * bw, r * bh + 3);
+            g.lineTo(x + Math.random() * bw, r * bh + bh - 3);
+            g.stroke();
+          }
+        }
+      }
+      const gm = g.createLinearGradient(0, s * 0.6, 0, s);
+      gm.addColorStop(0, 'rgba(40,90,50,0)');
+      gm.addColorStop(1, 'rgba(40,90,50,0.35)');
+      g.fillStyle = gm;
+      g.fillRect(0, s * 0.6, s, s * 0.4);
+      this.stains(g, s, 10, 0.3);
+      this.speckle(g, s, 2600, 0.3);
+    });
+  }
+
+  texPlaster() {
+    return this.makeTexture(256, (g, s) => {
+      g.fillStyle = '#17140f';
+      g.fillRect(0, 0, s, s);
+      this.stains(g, s, 10, 0.4);
+      this.speckle(g, s, 1500, 0.25, true);
+      g.strokeStyle = 'rgba(0,0,0,0.5)';
+      for (let i = 0; i < 4; i++) {
+        g.beginPath();
+        let x = Math.random() * s, y = Math.random() * s;
+        g.moveTo(x, y);
+        for (let k = 0; k < 6; k++) { x += Math.random() * 30 - 15; y += Math.random() * 30; g.lineTo(x, y); }
+        g.stroke();
+      }
+    });
+  }
+
+  texDoor() {
+    return this.makeTexture(256, (g, s) => {
+      g.fillStyle = '#22150d';
+      g.fillRect(0, 0, s, s);
+      for (let k = 0; k < 40; k++) {
+        g.strokeStyle = `rgba(0,0,0,${Math.random() * 0.25})`;
+        const x = Math.random() * s;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 3, s); g.stroke();
+      }
+      g.strokeStyle = 'rgba(255,255,255,0.08)';
+      g.lineWidth = 3;
+      g.strokeRect(36, 28, s - 72, s * 0.38);
+      g.strokeRect(36, s * 0.5, s - 72, s * 0.42);
+      g.strokeStyle = 'rgba(0,0,0,0.6)';
+      g.strokeRect(40, 32, s - 80, s * 0.38 - 8);
+      g.strokeRect(40, s * 0.5 + 4, s - 80, s * 0.42 - 8);
+      this.speckle(g, s, 700, 0.3);
+    });
+  }
+
+  texRug(base) {
+    return this.makeTexture(256, (g, s) => {
+      g.fillStyle = base;
+      g.fillRect(0, 0, s, s);
+      g.strokeStyle = 'rgba(200,170,110,0.45)';
+      g.lineWidth = 6;
+      g.strokeRect(14, 14, s - 28, s - 28);
+      g.lineWidth = 2;
+      g.strokeRect(30, 30, s - 60, s - 60);
+      g.fillStyle = 'rgba(200,170,110,0.28)';
+      for (let y = 56; y < s - 40; y += 36) {
+        g.beginPath();
+        g.moveTo(s / 2, y - 12); g.lineTo(s / 2 + 12, y); g.lineTo(s / 2, y + 12); g.lineTo(s / 2 - 12, y);
+        g.fill();
+      }
+      this.stains(g, s, 6, 0.3);
+      this.speckle(g, s, 2400, 0.3);
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  // 3. Room Construction
+  // ------------------------------------------------------------------------
+  mat(color, rough = 0.8, metal = 0, extra = {}) {
+    return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: rough, metalness: metal }, extra));
+  }
+
+  addMesh(group, geo, material, x, y, z, opts = {}) {
+    const m = new THREE.Mesh(geo, material);
+    m.position.set(x, y, z);
+    if (opts.ry) m.rotation.y = opts.ry;
+    if (opts.rx) m.rotation.x = opts.rx;
+    if (opts.rz) m.rotation.z = opts.rz;
+    m.castShadow = opts.cast !== false;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
+  }
+
+  addBox(room, material, w, h, d, x, y, z, collide = false, opts = {}) {
+    const m = this.addMesh(room.group, new THREE.BoxGeometry(w, h, d), material, x, y, z, opts);
+    if (collide) room.colliders.push([x - w / 2, x + w / 2, z - d / 2, z + d / 2]);
+    return m;
+  }
+
+  addFlicker(room, light, amp, speed) {
+    this.flicker.push({ room: room.id, light, base: light.intensity, amp, speed, phase: Math.random() * 10 });
+  }
+
+  createRoom(id, b, wallTex, floorTex, ceilTex, H = 3.4) {
+    const room = { id, group: new THREE.Group(), bounds: b, colliders: [], H };
+    const w = b.maxX - b.minX, d = b.maxZ - b.minZ;
+    const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
+
+    const fT = floorTex.clone(); fT.needsUpdate = true; fT.repeat.set(w / 3, d / 3);
+    const floor = this.addMesh(room.group, new THREE.PlaneGeometry(w, d), this.mat(0xffffff, 0.75, 0, { map: fT }), cx, 0, cz, { rx: -Math.PI / 2, cast: false });
+    floor.name = 'floor';
+    const cT = ceilTex.clone(); cT.needsUpdate = true; cT.repeat.set(w / 3, d / 3);
+    this.addMesh(room.group, new THREE.PlaneGeometry(w, d), this.mat(0xffffff, 1, 0, { map: cT }), cx, H, cz, { rx: Math.PI / 2, cast: false });
+
+    const wall = (len, x, z, ry) => {
+      const t = wallTex.clone(); t.needsUpdate = true; t.repeat.set(len / 3, H / 3.4);
+      this.addMesh(room.group, new THREE.PlaneGeometry(len, H), this.mat(0xffffff, 0.95, 0, { map: t }), x, H / 2, z, { ry, cast: false });
     };
+    wall(w, cx, b.minZ, 0);
+    wall(w, cx, b.maxZ, Math.PI);
+    wall(d, b.minX, cz, Math.PI / 2);
+    wall(d, b.maxX, cz, -Math.PI / 2);
 
-    // Configure textures for maximum clarity
-    Object.values(textures).forEach(tex => {
-      tex.generateMipmaps = true;
-      tex.minFilter = THREE.LinearMipmapLinearFilter;
-      tex.magFilter = THREE.LinearFilter;
+    room.group.visible = false;
+    this.scene.add(room.group);
+    this.rooms[id] = room;
+    return room;
+  }
+
+  // Door set into a wall. side is the wall the door sits on: 'N' z=min, 'S' z=max, 'W' x=min, 'E' x=max
+  addDoor(room, side, pos, locked = false) {
+    const b = room.bounds;
+    const rot = { N: 0, S: Math.PI, W: Math.PI / 2, E: -Math.PI / 2 }[side];
+    const base = {
+      N: [pos, b.minZ], S: [pos, b.maxZ], W: [b.minX, pos], E: [b.maxX, pos]
+    }[side];
+    const g = new THREE.Group();
+    g.position.set(base[0], 0, base[1]);
+    g.rotation.y = rot;
+    const frameMat = this.mat(0x1a110b, 0.7);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.2, 0.1), this.mat(0xffffff, 0.75, 0, { map: this.texDoor() }));
+    slab.position.set(0, 1.1, 0.05);
+    slab.castShadow = slab.receiveShadow = true;
+    g.add(slab);
+    const post = (x) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.4, 0.2), frameMat);
+      m.position.set(x, 1.2, 0.1); m.castShadow = true; g.add(m);
+    };
+    post(-0.57); post(0.57);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.16, 0.2), frameMat);
+    lintel.position.set(0, 2.32, 0.1); g.add(lintel);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), this.mat(0xb08a45, 0.3, 0.9));
+    knob.position.set(0.36, 1.05, 0.13); g.add(knob);
+    if (locked) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.04), this.mat(0x222222, 0.4, 0.8));
+      plate.position.set(0.36, 1.05 + 0.0, 0.12);
+    }
+    room.group.add(g);
+  }
+
+  addSconce(room, x, y, z, side) {
+    const g = new THREE.Group();
+    g.position.set(x, y, z);
+    const dir = side === 'W' ? 1 : -1;
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.1), this.mat(0x111111, 0.4, 0.8));
+    bracket.position.x = -dir * 0.05;
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 8), new THREE.MeshBasicMaterial({ color: 0xffb060 }));
+    flame.position.set(dir * 0.1, 0.18, 0);
+    g.add(bracket, flame);
+    room.group.add(g);
+    const light = new THREE.PointLight(0xff9040, 1.15, 8, 2);
+    light.position.set(x + dir * 0.35, y + 0.2, z);
+    room.group.add(light);
+    this.addFlicker(room, light, 0.35, 7);
+  }
+
+  addPainting(room, x, y, z, ry, w = 0.7, h = 0.9) {
+    const g = new THREE.Group();
+    g.position.set(x, y, z);
+    g.rotation.y = ry;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, h + 0.1, 0.06), this.mat(0x2a1c10, 0.5, 0.4));
+    const t = this.makeTexture(128, (c, s) => {
+      const gr = c.createLinearGradient(0, 0, s, s);
+      gr.addColorStop(0, '#1e1a14'); gr.addColorStop(1, '#07060a');
+      c.fillStyle = gr; c.fillRect(0, 0, s, s);
+      c.fillStyle = 'rgba(190,175,150,0.55)';
+      c.beginPath(); c.ellipse(s / 2, s * 0.38, s * 0.14, s * 0.18, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(10,8,8,0.9)';
+      c.fillRect(s * 0.4, s * 0.34, s * 0.07, s * 0.05); c.fillRect(s * 0.54, s * 0.34, s * 0.07, s * 0.05);
+      c.fillStyle = 'rgba(60,45,35,0.9)';
+      c.fillRect(s * 0.28, s * 0.58, s * 0.44, s * 0.42);
+      this.speckle(c, s, 300, 0.4);
     });
+    const canvas = new THREE.Mesh(new THREE.PlaneGeometry(w, h), this.mat(0xffffff, 0.8, 0, { map: t }));
+    canvas.position.z = 0.04;
+    g.add(frame, canvas);
+    room.group.add(g);
+  }
 
-    // Create an immersive panoramic cylinder for each room
-    const sphereRadius = 24;
-    const cylinderGeo = new THREE.CylinderGeometry(sphereRadius, sphereRadius, 28, 48, 1, true);
-
-    Object.keys(textures).forEach(roomId => {
-      const mat = new THREE.MeshBasicMaterial({
-        map: textures[roomId],
-        side: THREE.BackSide,
-        depthWrite: false
-      });
-      const mesh = new THREE.Mesh(cylinderGeo, mat);
-      mesh.visible = false;
-      this.scene.add(mesh);
-      this.roomSpheres[roomId] = mesh;
+  addPumpkin(room, x, z, ry = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.32, z);
+    g.rotation.y = ry;
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(0.34, 18, 14),
+      this.mat(0xc9490a, 0.55, 0, { emissive: 0x4a1a00, emissiveIntensity: 0.9 })
+    );
+    body.scale.set(1.1, 0.88, 1.1);
+    body.castShadow = true;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.14, 6), this.mat(0x2c3a14, 0.9));
+    stem.position.y = 0.3;
+    const faceTex = this.makeTexture(128, (c, s) => {
+      c.clearRect(0, 0, s, s);
+      c.fillStyle = '#ffc24a';
+      c.beginPath(); c.moveTo(s * 0.2, s * 0.42); c.lineTo(s * 0.42, s * 0.42); c.lineTo(s * 0.31, s * 0.25); c.fill();
+      c.beginPath(); c.moveTo(s * 0.58, s * 0.42); c.lineTo(s * 0.8, s * 0.42); c.lineTo(s * 0.69, s * 0.25); c.fill();
+      c.beginPath(); c.moveTo(s * 0.2, s * 0.6);
+      c.quadraticCurveTo(s * 0.5, s * 0.92, s * 0.8, s * 0.6);
+      c.lineTo(s * 0.7, s * 0.58); c.quadraticCurveTo(s * 0.5, s * 0.78, s * 0.3, s * 0.58); c.fill();
     });
+    const face = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.5, 0.5),
+      new THREE.MeshBasicMaterial({ map: faceTex, transparent: true, depthWrite: false })
+    );
+    face.position.z = 0.365;
+    g.add(body, stem, face);
+    room.group.add(g);
+    const light = new THREE.PointLight(0xff7a18, 1.6, 7, 2);
+    light.position.set(x, 0.5, z);
+    room.group.add(light);
+    this.addFlicker(room, light, 0.3, 9);
+    room.colliders.push([x - 0.35, x + 0.35, z - 0.35, z + 0.35]);
+  }
 
-    // Ground plane disc to ground the player
-    const groundGeo = new THREE.CircleGeometry(sphereRadius, 32);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x111116,
-      roughness: 0.9,
-      metalness: 0.1
-    });
-    this.groundDisc = new THREE.Mesh(groundGeo, groundMat);
-    this.groundDisc.rotation.x = -Math.PI / 2;
-    this.groundDisc.position.y = 0;
-    this.scene.add(this.groundDisc);
+  buildImmersiveRooms() {
+    this.rooms = {};
+    this.flicker = [];
+    this.pumpkins = [];
 
-    // Ceiling disc
-    this.ceilDisc = this.groundDisc.clone();
-    this.ceilDisc.position.y = 14;
-    this.scene.add(this.ceilDisc);
+    const wood = this.texWood();
+    const plaster = this.texPlaster();
+    const stone = this.texStone();
 
-    // Build 3D Interactive Items
+    this.buildCorridor(wood, plaster);
+    this.buildParlor(wood, plaster);
+    this.buildBedroom(wood, plaster);
+    this.buildCrypt(stone);
     this.buildProps();
   }
 
-  buildProps() {
-    // --- 1. The Glowing Silver Key (Located in Bedroom) ---
-    const keyGroup = new THREE.Group();
-    const keyHead = new THREE.Mesh(
-      new THREE.TorusGeometry(0.18, 0.05, 8, 16),
-      new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        metalness: 0.95,
-        roughness: 0.1,
-        emissive: 0x88ccff,
-        emissiveIntensity: 1.2
-      })
-    );
-    const keyStem = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8),
-      new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        metalness: 0.9,
-        emissive: 0x88ccff,
-        emissiveIntensity: 1.0
-      })
-    );
-    keyStem.position.y = -0.25;
-    keyGroup.add(keyHead, keyStem);
-    keyGroup.position.set(4.5, 1.1, -4.5); // On vanity in bedroom
-    this.silverKeyMesh = keyGroup;
-    this.silverKeyMesh.visible = false;
-    this.scene.add(this.silverKeyMesh);
+  buildCorridor(wood, plaster) {
+    const wall = this.texWall({ base: [95, 10, 17], panel: [24, 30, 11], peel: true });
+    const r = this.createRoom('corridor', { minX: -2, maxX: 2, minZ: -12, maxZ: 12 }, wall, wood, plaster, 3.4);
+    r.fog = [0x070608, 0.06];
+    r.ambient = [0x545a70, 0.42];
 
-    this.keyLight = new THREE.PointLight(0x77bbff, 2.5, 6, 2.0);
-    this.keyLight.position.set(4.5, 1.3, -4.5);
-    this.keyLight.visible = false;
-    this.scene.add(this.keyLight);
+    this.addDoor(r, 'W', -3);
+    this.addDoor(r, 'E', -3);
+    this.addDoor(r, 'W', 5);
+    this.addDoor(r, 'E', 6.5);
 
-    // --- 2. The Cursed Horned Skull Relic (Located in Crypt) ---
-    const skullGroup = new THREE.Group();
-    const skullHead = new THREE.Mesh(
-      new THREE.SphereGeometry(0.5, 16, 16),
-      new THREE.MeshStandardMaterial({
-        color: 0xd8dcb4,
-        roughness: 0.5,
-        emissive: 0x22ee33,
-        emissiveIntensity: 0.7
-      })
-    );
-    const hornL = new THREE.Mesh(
-      new THREE.ConeGeometry(0.15, 0.7, 8),
-      new THREE.MeshStandardMaterial({ color: 0x161009, emissive: 0x113311 })
-    );
-    hornL.position.set(-0.48, 0.48, 0);
-    hornL.rotation.z = 0.55;
+    // Runner rug
+    const rugTex = this.texRug('#3a1212');
+    rugTex.repeat.set(1, 8);
+    this.addMesh(r.group, new THREE.PlaneGeometry(1.3, 22), this.mat(0xffffff, 1, 0, { map: rugTex }), 0, 0.012, 0, { rx: -Math.PI / 2, cast: false });
 
-    const hornR = hornL.clone();
-    hornR.position.set(0.48, 0.48, 0);
-    hornR.rotation.z = -0.55;
+    // Ceiling beams
+    const beam = this.mat(0x1c120b, 0.8);
+    for (let z = -10; z <= 10; z += 4) this.addBox(r, beam, 4, 0.22, 0.28, 0, 3.29, z, false, { cast: false });
 
-    // Emerald Glowing Eyes
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x39ff14 });
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
-    eyeL.position.set(-0.18, 0.05, 0.45);
-    const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
-    eyeR.position.set(0.18, 0.05, 0.45);
+    // Crypt gate at the north end
+    const stoneMat = this.mat(0x23262a, 0.95);
+    this.addBox(r, stoneMat, 0.35, 2.7, 0.3, -1.0, 1.35, -11.8);
+    this.addBox(r, stoneMat, 0.35, 2.7, 0.3, 1.0, 1.35, -11.8);
+    this.addBox(r, stoneMat, 2.35, 0.4, 0.3, 0, 2.7, -11.8);
+    this.addMesh(r.group, new THREE.PlaneGeometry(1.8, 2.6), new THREE.MeshBasicMaterial({ color: 0x03100a }), 0, 1.3, -11.93, { cast: false });
+    const iron = this.mat(0x15151a, 0.45, 0.85);
+    for (let i = 0; i < 11; i++) {
+      this.addMesh(r.group, new THREE.CylinderGeometry(0.022, 0.022, 2.6, 6), iron, -0.8 + i * 0.16, 1.3, -11.75);
+    }
+    [0.4, 1.3, 2.2].forEach(y => this.addBox(r, iron, 1.75, 0.05, 0.05, 0, y, -11.72));
 
-    skullGroup.add(skullHead, hornL, hornR, eyeL, eyeR);
-    skullGroup.position.set(0, 1.1, -5.5); // On Crypt Altar
-    this.relicMesh = skullGroup;
-    this.relicMesh.visible = false;
-    this.scene.add(this.relicMesh);
+    // Sealed exit at the south end: heavy double door wrapped in chains
+    this.addDoor(r, 'S', -0.5);
+    this.addDoor(r, 'S', 0.55);
+    const chain = this.mat(0x2a2a2e, 0.4, 0.9);
+    for (let i = 0; i < 16; i++) {
+      const link = this.addMesh(r.group, new THREE.TorusGeometry(0.05, 0.014, 6, 10), chain, -0.9 + i * 0.12, 0.9 + Math.sin(i * 0.8) * 0.06 + i * 0.05, 11.78, { ry: i % 2 ? Math.PI / 2 : 0 });
+      link.castShadow = false;
+    }
+    for (let i = 0; i < 16; i++) {
+      this.addMesh(r.group, new THREE.TorusGeometry(0.05, 0.014, 6, 10), chain, 0.9 - i * 0.12, 0.8 + i * 0.06, 11.76, { ry: i % 2 ? Math.PI / 2 : 0, cast: false });
+    }
 
-    this.relicLight = new THREE.PointLight(0x39ff14, 5.0, 14, 1.5);
-    this.relicLight.position.set(0, 1.8, -5.5);
-    this.relicLight.visible = false;
-    this.scene.add(this.relicLight);
+    this.addSconce(r, -1.95, 2.0, 8, 'W');
+    this.addSconce(r, 1.95, 2.0, 2, 'E');
+    this.addSconce(r, -1.95, 2.0, -6, 'W');
+    this.addSconce(r, 1.95, 2.0, -9, 'E');
 
-    // --- 3. Jack-o'-Lanterns (Carved Pumpkins with Candlelight) ---
-    this.pumpkins = [];
-    this.createJackOLantern(3.5, 0.35, -5);
-    this.createJackOLantern(-3.5, 0.35, 4);
+    this.addPainting(r, -1.93, 1.9, 1, Math.PI / 2);
+    this.addPainting(r, 1.93, 1.9, -6, -Math.PI / 2);
+    this.addPainting(r, 1.93, 1.9, 9, -Math.PI / 2, 0.6, 0.8);
+
+    this.addPumpkin(r, 1.45, 9.2, -0.5);
+    this.addPumpkin(r, -1.45, -8.6, 0.4);
   }
 
-  createJackOLantern(x, y, z) {
-    const pumpkin = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.SphereGeometry(0.4, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0xee5500, roughness: 0.5, emissive: 0x331100 })
-    );
-    const stem = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.05, 0.18, 5),
-      new THREE.MeshStandardMaterial({ color: 0x224411 })
-    );
-    stem.position.y = 0.42;
-    pumpkin.add(body, stem);
-    pumpkin.position.set(x, y, z);
-    this.scene.add(pumpkin);
+  buildParlor(wood, plaster) {
+    const wall = this.texWall({ base: [350, 38, 15], panel: [22, 35, 10] });
+    const r = this.createRoom('parlor', { minX: -5, maxX: 5, minZ: -6, maxZ: 6 }, wall, wood, plaster, 3.4);
+    r.fog = [0x0a0505, 0.055];
+    r.ambient = [0x7a4a30, 0.5];
 
-    const light = new THREE.PointLight(0xff7700, 2.2, 8, 1.8);
-    light.position.set(x, y + 0.15, z);
-    this.scene.add(light);
-    this.pumpkins.push({ mesh: pumpkin, light: light, base: 2.2 });
+    this.addDoor(r, 'S', 0);
+
+    const stoneMat = this.mat(0x2b2623, 0.95);
+    const darkWood = this.mat(0x24160d, 0.6, 0.1);
+    const fabric = this.mat(0x4a1a1a, 0.95);
+
+    // Fireplace
+    this.addBox(r, stoneMat, 0.6, 2.4, 0.6, -1.4, 1.2, -5.7);
+    this.addBox(r, stoneMat, 0.6, 2.4, 0.6, 1.4, 1.2, -5.7);
+    this.addBox(r, stoneMat, 3.4, 0.5, 0.6, 0, 2.15, -5.7);
+    this.addBox(r, darkWood, 3.8, 0.12, 0.8, 0, 2.45, -5.65);
+    this.addMesh(r.group, new THREE.PlaneGeometry(2.2, 1.9), new THREE.MeshBasicMaterial({ color: 0x050302 }), 0, 0.95, -5.93, { cast: false });
+    const logMat = this.mat(0x1a0f08, 0.9, 0, { emissive: 0x551a00, emissiveIntensity: 0.6 });
+    this.addMesh(r.group, new THREE.CylinderGeometry(0.1, 0.1, 1.2, 8), logMat, 0, 0.12, -5.55, { rz: Math.PI / 2 });
+    this.addMesh(r.group, new THREE.CylinderGeometry(0.09, 0.09, 1.0, 8), logMat, 0, 0.3, -5.5, { rz: Math.PI / 2 + 0.3 });
+    this.fireFlames = [];
+    for (let i = 0; i < 4; i++) {
+      const f = new THREE.Mesh(
+        new THREE.ConeGeometry(0.16 - i * 0.02, 0.7 + i * 0.1, 8),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffb347 : 0xff6a1a, transparent: true, opacity: 0.85, depthWrite: false })
+      );
+      f.position.set(-0.35 + i * 0.24, 0.5, -5.55);
+      r.group.add(f);
+      this.fireFlames.push(f);
+    }
+    const fire = new THREE.PointLight(0xff6a1a, 3.2, 14, 2);
+    fire.position.set(0, 0.9, -4.9);
+    fire.castShadow = false;
+    r.group.add(fire);
+    this.addFlicker(r, fire, 0.35, 11);
+
+    const emberPos = new Float32Array(60 * 3);
+    for (let i = 0; i < emberPos.length; i += 3) {
+      emberPos[i] = (Math.random() - 0.5) * 1.2;
+      emberPos[i + 1] = Math.random() * 1.6;
+      emberPos[i + 2] = -5.5 + (Math.random() - 0.5) * 0.3;
+    }
+    const emberGeo = new THREE.BufferGeometry();
+    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
+    this.fireEmbers = new THREE.Points(emberGeo, new THREE.PointsMaterial({ color: 0xffa040, size: 0.04, transparent: true, opacity: 0.9, depthWrite: false }));
+    this.fireEmbers.frustumCulled = false;
+    r.group.add(this.fireEmbers);
+
+    // Rug and seating
+    const rug = this.texRug('#4a1a1a');
+    this.addMesh(r.group, new THREE.PlaneGeometry(4.4, 3.2), this.mat(0xffffff, 1, 0, { map: rug }), 0, 0.012, -1.6, { rx: -Math.PI / 2, cast: false });
+    this.addBox(r, fabric, 2.2, 0.45, 0.9, 0, 0.3, 0.3, true);
+    this.addBox(r, fabric, 2.2, 0.75, 0.22, 0, 0.62, 0.82);
+    this.addBox(r, fabric, 0.22, 0.6, 0.9, -1.1, 0.45, 0.3);
+    this.addBox(r, fabric, 0.22, 0.6, 0.9, 1.1, 0.45, 0.3);
+    this.addBox(r, darkWood, 1.1, 0.06, 0.6, 0, 0.45, -1.7, true);
+    this.addBox(r, darkWood, 0.08, 0.42, 0.08, -0.5, 0.21, -1.5);
+    this.addBox(r, darkWood, 0.08, 0.42, 0.08, 0.5, 0.21, -1.5);
+    this.addBox(r, fabric, 0.9, 0.5, 0.9, -2.6, 0.28, -2.2, true, { ry: 0.5 });
+    this.addBox(r, fabric, 0.9, 0.5, 0.9, 2.6, 0.28, -2.2, true, { ry: -0.5 });
+
+    // Bookcase along the west wall
+    this.addBox(r, darkWood, 0.5, 2.6, 3.2, -4.72, 1.3, -1.8, true);
+    const bookColors = [0x5a1a1a, 0x1d2f45, 0x2f4a2a, 0x4a3a1a, 0x2a1a3a, 0x3a1a1a];
+    for (let shelf = 0; shelf < 4; shelf++) {
+      let z = -3.25;
+      while (z < -0.4) {
+        const bw = 0.06 + Math.random() * 0.06, bh = 0.3 + Math.random() * 0.22;
+        const book = this.mat(bookColors[Math.floor(Math.random() * bookColors.length)], 0.85);
+        const m = this.addMesh(r.group, new THREE.BoxGeometry(0.28, bh, bw), book, -4.55, 0.35 + shelf * 0.62 + bh / 2, z + bw / 2, { cast: false });
+        m.rotation.z = Math.random() < 0.06 ? 0.25 : 0;
+        z += bw + 0.012;
+      }
+    }
+
+    // Grandfather clock
+    this.addBox(r, darkWood, 0.6, 2.3, 0.45, -4.5, 1.15, 3.6, true);
+    this.addMesh(r.group, new THREE.CircleGeometry(0.2, 20), new THREE.MeshBasicMaterial({ color: 0xcfc6a0 }), -4.5 + 0.26, 1.9, 3.6, { ry: Math.PI / 2, cast: false });
+
+    this.addPainting(r, 4.93, 1.9, -1, -Math.PI / 2, 0.9, 1.2);
+    this.addPainting(r, -2.8, 2.0, -5.94, 0, 0.6, 0.8);
+    this.addPumpkin(r, 3.9, -4.8, -0.4);
+  }
+
+  buildBedroom(wood, plaster) {
+    const wall = this.texWall({ base: [212, 16, 18], panel: [26, 22, 12], peel: true });
+    const r = this.createRoom('bedroom', { minX: -5, maxX: 5, minZ: -6, maxZ: 6 }, wall, wood, plaster, 3.4);
+    r.fog = [0x05070b, 0.06];
+    r.ambient = [0x4a5f88, 0.55];
+
+    this.addDoor(r, 'S', 0);
+
+    const darkWood = this.mat(0x1e140d, 0.6, 0.1);
+    const linen = this.mat(0x8d8f98, 0.95);
+
+    // Moonlit window
+    const frameMat = this.mat(0x120d09, 0.6);
+    this.addBox(r, frameMat, 1.7, 0.1, 0.12, 0, 2.8, -5.92, false, { cast: false });
+    this.addBox(r, frameMat, 1.7, 0.1, 0.12, 0, 1.0, -5.92, false, { cast: false });
+    this.addBox(r, frameMat, 0.1, 1.9, 0.12, -0.8, 1.9, -5.92, false, { cast: false });
+    this.addBox(r, frameMat, 0.1, 1.9, 0.12, 0.8, 1.9, -5.92, false, { cast: false });
+    this.addBox(r, frameMat, 0.06, 1.8, 0.1, 0, 1.9, -5.92, false, { cast: false });
+    this.addBox(r, frameMat, 1.6, 0.06, 0.1, 0, 1.9, -5.92, false, { cast: false });
+    this.addMesh(r.group, new THREE.PlaneGeometry(1.6, 1.8), new THREE.MeshBasicMaterial({ color: 0x5c7cb8 }), 0, 1.9, -5.97, { cast: false });
+    const moon = new THREE.SpotLight(0x8ea8e8, 3.4, 16, 0.75, 0.8, 1.2);
+    moon.position.set(0, 2.4, -6);
+    moon.target.position.set(0.5, 0, -1.5);
+    r.group.add(moon, moon.target);
+
+    // Bed
+    this.addBox(r, darkWood, 1.8, 0.35, 2.3, -3.2, 0.3, -4.0, true);
+    this.addBox(r, linen, 1.7, 0.22, 2.1, -3.2, 0.58, -3.95);
+    this.addBox(r, this.mat(0x2a2f40, 0.95), 1.72, 0.1, 1.3, -3.2, 0.72, -3.55);
+    this.addBox(r, linen, 0.8, 0.14, 0.4, -3.2, 0.74, -4.8);
+    this.addBox(r, darkWood, 1.9, 1.3, 0.12, -3.2, 0.85, -5.1);
+
+    // Vanity with the key on top
+    this.addBox(r, darkWood, 0.8, 1.0, 1.6, 4.1, 0.5, -4.5, true);
+    this.addBox(r, this.mat(0x0c0c10, 0.12, 1), 0.04, 1.0, 0.8, 4.97, 1.75, -4.5, false, { cast: false });
+    this.addBox(r, darkWood, 0.4, 0.42, 0.4, 3.0, 0.21, -4.3, true);
+
+    // Wardrobe
+    this.addBox(r, darkWood, 0.8, 2.5, 1.7, 4.55, 1.25, 1.4, true);
+    this.addBox(r, this.mat(0xb08a45, 0.3, 0.9), 0.04, 0.2, 0.04, 4.12, 1.1, 1.1);
+    this.addBox(r, this.mat(0xb08a45, 0.3, 0.9), 0.04, 0.2, 0.04, 4.12, 1.1, 1.7);
+
+    // Nightstand with a candle
+    this.addBox(r, darkWood, 0.55, 0.6, 0.55, -1.5, 0.3, -5.6, true);
+    this.addMesh(r.group, new THREE.CylinderGeometry(0.04, 0.04, 0.18, 8), this.mat(0xe8dfc8, 0.7), -1.5, 0.69, -5.6);
+    this.addMesh(r.group, new THREE.ConeGeometry(0.02, 0.07, 6), new THREE.MeshBasicMaterial({ color: 0xffd080 }), -1.5, 0.82, -5.6, { cast: false });
+    const candle = new THREE.PointLight(0xffa850, 1.2, 7, 2);
+    candle.position.set(-1.5, 0.95, -5.4);
+    r.group.add(candle);
+    this.addFlicker(r, candle, 0.4, 8);
+
+    const rug = this.texRug('#2a2f40');
+    this.addMesh(r.group, new THREE.PlaneGeometry(3.4, 2.4), this.mat(0xffffff, 1, 0, { map: rug }), -0.6, 0.012, -1.0, { rx: -Math.PI / 2, cast: false });
+    this.addPainting(r, -4.93, 1.9, 0.5, Math.PI / 2, 0.8, 1.0);
+  }
+
+  buildCrypt(stone) {
+    const r = this.createRoom('crypt', { minX: -5, maxX: 5, minZ: -8, maxZ: 6 }, stone, stone, stone, 3.8);
+    r.fog = [0x040c07, 0.085];
+    r.ambient = [0x2c5a40, 0.5];
+
+    this.addDoor(r, 'S', 0);
+
+    const stoneMat = this.mat(0x32363a, 0.95);
+
+    // Altar on a stepped base
+    this.addBox(r, stoneMat, 2.8, 0.2, 1.6, 0, 0.1, -5.6, true);
+    this.addBox(r, stoneMat, 2.0, 0.8, 1.0, 0, 0.6, -5.6);
+    this.addBox(r, this.mat(0x3d4044, 0.9), 2.2, 0.12, 1.2, 0, 1.06, -5.6);
+
+    // Pillars
+    [[-3, -1], [3, -1], [-3, -4.5], [3, -4.5]].forEach(([x, z]) => {
+      this.addMesh(r.group, new THREE.CylinderGeometry(0.34, 0.4, 3.8, 10), stoneMat, x, 1.9, z);
+      this.addBox(r, stoneMat, 0.9, 0.2, 0.9, x, 0.1, z, true);
+      this.addBox(r, stoneMat, 0.9, 0.2, 0.9, x, 3.7, z, false, { cast: false });
+    });
+
+    // Sarcophagi
+    this.addBox(r, stoneMat, 1.1, 0.7, 2.4, -3.7, 0.35, 2.6, true);
+    this.addBox(r, this.mat(0x3a3e42, 0.9), 1.2, 0.16, 2.5, -3.7, 0.78, 2.6, false, { ry: 0.04 });
+    this.addBox(r, stoneMat, 1.1, 0.7, 2.4, 3.7, 0.35, 2.4, true);
+    this.addBox(r, this.mat(0x3a3e42, 0.9), 1.2, 0.18, 2.5, 3.7, 0.79, 2.4, false, { ry: -0.12 });
+
+    // Ground light and torches
+    const green = new THREE.PointLight(0x2bff7a, 1.3, 9, 2);
+    green.position.set(0, 0.5, -2);
+    r.group.add(green);
+    this.addFlicker(r, green, 0.2, 3);
+    this.addSconce(r, -4.9, 2.2, -2.5, 'W');
+    this.addSconce(r, 4.9, 2.2, 0.5, 'E');
+
+    const smokePos = new Float32Array(90 * 3);
+    for (let i = 0; i < smokePos.length; i += 3) {
+      smokePos[i] = (Math.random() - 0.5) * 8;
+      smokePos[i + 1] = Math.random() * 1.6;
+      smokePos[i + 2] = -2 + (Math.random() - 0.5) * 9;
+    }
+    const smokeGeo = new THREE.BufferGeometry();
+    smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
+    this.greenSmoke = new THREE.Points(smokeGeo, new THREE.PointsMaterial({ color: 0x5dff9a, size: 0.09, transparent: true, opacity: 0.35, depthWrite: false }));
+    this.greenSmoke.frustumCulled = false;
+    r.group.add(this.greenSmoke);
+  }
+
+  buildProps() {
+    // Silver key, resting on the bedroom vanity
+    const keyGroup = new THREE.Group();
+    const silver = this.mat(0xdfe6ee, 0.25, 0.95, { emissive: 0x6fa6d8, emissiveIntensity: 0.55 });
+    const keyHead = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.028, 8, 18), silver);
+    keyHead.position.y = 0.12;
+    const keyStem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8), silver);
+    keyStem.position.y = -0.1;
+    const t1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.035, 0.03), silver); t1.position.set(0.05, -0.2, 0);
+    const t2 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.035, 0.03), silver); t2.position.set(0.04, -0.12, 0);
+    keyGroup.add(keyHead, keyStem, t1, t2);
+    keyGroup.position.set(4.1, 1.32, -4.5);
+    this.silverKeyMesh = keyGroup;
+    this.silverKeyMesh.visible = false;
+    this.rooms.bedroom.group.add(this.silverKeyMesh);
+
+    this.keyLight = new THREE.PointLight(0x8ec8ff, 1.4, 4, 2);
+    this.keyLight.position.set(4.0, 1.5, -4.5);
+    this.keyLight.visible = false;
+    this.rooms.bedroom.group.add(this.keyLight);
+
+    // Horned skull relic on the crypt altar
+    const skullGroup = new THREE.Group();
+    const bone = this.mat(0xd8d4b0, 0.55, 0, { emissive: 0x1a6a2a, emissiveIntensity: 0.55 });
+    const skullHead = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 14), bone);
+    skullHead.scale.set(1, 1.05, 1.1);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), bone);
+    jaw.position.set(0, -0.22, 0.03);
+    const hornMat = this.mat(0x15110b, 0.6, 0, { emissive: 0x0b2a12 });
+    const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.38, 8), hornMat);
+    hornL.position.set(-0.2, 0.22, 0); hornL.rotation.z = 0.7;
+    const hornR = hornL.clone();
+    hornR.position.set(0.2, 0.22, 0); hornR.rotation.z = -0.7;
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x39ff7a });
+    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), eyeMat);
+    eyeL.position.set(-0.08, 0.02, 0.2);
+    const eyeR = eyeL.clone();
+    eyeR.position.x = 0.08;
+    skullGroup.add(skullHead, jaw, hornL, hornR, eyeL, eyeR);
+    skullGroup.position.set(0, 1.4, -5.6);
+    this.relicMesh = skullGroup;
+    this.relicMesh.visible = false;
+    this.rooms.crypt.group.add(this.relicMesh);
+
+    this.relicLight = new THREE.PointLight(0x39ff7a, 3.0, 9, 2);
+    this.relicLight.position.set(0, 1.9, -5.0);
+    this.relicLight.visible = false;
+    this.rooms.crypt.group.add(this.relicLight);
   }
 
   // ------------------------------------------------------------------------
-  // 3. Seamless Room Switching & Doorway Management
+  // 3b. Room Switching & Doorway Management
   // ------------------------------------------------------------------------
   switchRoom(roomId, playSound = true) {
     if (playSound) this.playProceduralSound('door');
 
+    const from = this.currentRoom;
     this.currentRoom = roomId;
+    const room = this.rooms[roomId];
+    this.activeRoom = room;
 
-    // Toggle room cylinder visibility
-    Object.keys(this.roomSpheres).forEach(id => {
-      this.roomSpheres[id].visible = (id === roomId);
-    });
+    Object.keys(this.rooms).forEach(id => { this.rooms[id].group.visible = (id === roomId); });
 
-    // Reset camera position to room center
-    this.camera.position.set(0, this.playerHeight, 0);
-
-    // Toggle Room-Specific Props and Lights
-    const isBedroom = (roomId === 'bedroom');
-    const isParlor = (roomId === 'parlor');
-    const isCrypt = (roomId === 'crypt');
-    const isCorridor = (roomId === 'corridor');
-
-    // Particles
-    if (this.dustParticles) this.dustParticles.visible = isCorridor;
-    if (this.fireEmbers) this.fireEmbers.visible = isParlor;
-    if (this.greenSmoke) this.greenSmoke.visible = isCrypt;
-
-    // Props
-    if (this.silverKeyMesh) {
-      this.silverKeyMesh.visible = isBedroom && !this.hasKey;
-      this.keyLight.visible = isBedroom && !this.hasKey;
+    // Place the player at the matching doorway and face into the room
+    let spawn = { x: 0, z: 4.3, yaw: 0 };
+    if (roomId === 'corridor') {
+      if (from === 'parlor') spawn = { x: -0.9, z: -3, yaw: -Math.PI / 2 };
+      else if (from === 'bedroom') spawn = { x: 0.9, z: -3, yaw: Math.PI / 2 };
+      else if (from === 'crypt') spawn = { x: 0, z: -9.4, yaw: Math.PI };
+      else spawn = { x: 0, z: 9, yaw: 0 };
     }
-    if (this.relicMesh) {
-      this.relicMesh.visible = isCrypt && !this.hasRelic;
-      this.relicLight.visible = isCrypt && !this.hasRelic;
-    }
+    this.camera.position.set(spawn.x, this.camHeight || this.playerHeight, spawn.z);
+    this.euler.set(0, spawn.yaw, 0);
+    this.camera.quaternion.setFromEuler(this.euler);
 
-    // Dynamic Atmosphere Tone
+    // Atmosphere
+    this.scene.fog.color.setHex(room.fog[0]);
+    this.scene.fog.density = room.fog[1];
+    this.ambientLight.color.setHex(room.ambient[0]);
+    this.ambientLight.intensity = room.ambient[1];
+
+    const hasKey = this.hasKey, hasRelic = this.hasRelic;
+    const isBedroom = roomId === 'bedroom', isCrypt = roomId === 'crypt';
+    this.silverKeyMesh.visible = isBedroom && !hasKey;
+    this.keyLight.visible = isBedroom && !hasKey;
+    this.relicMesh.visible = isCrypt && !hasRelic;
+    this.relicLight.visible = isCrypt && !hasRelic;
+
+    const obj = document.getElementById('obj-text');
     if (isBedroom) {
-      this.ambientLight.color.setHex(0x5577aa);
-      this.ambientLight.intensity = 1.4;
-      document.getElementById('obj-text').textContent = this.hasKey ? 'Return to the Corridor and unlock the Crypt.' : 'Explore the bedroom. Find the Silver Key on the vanity.';
-    } else if (isParlor) {
-      this.ambientLight.color.setHex(0x884411);
-      this.ambientLight.intensity = 1.5;
-      document.getElementById('obj-text').textContent = 'Victorian Parlor. Warm yourself by the fire, but listen closely.';
+      obj.textContent = hasKey ? 'Return to the corridor and unlock the crypt' : 'Find the silver key on the vanity';
+    } else if (roomId === 'parlor') {
+      obj.textContent = 'Parlor. The fire is warm, keep listening';
     } else if (isCrypt) {
-      this.ambientLight.color.setHex(0x115522);
-      this.ambientLight.intensity = 1.6;
-      document.getElementById('obj-text').textContent = this.hasRelic ? 'ALARM! SPRINT BACK TO THE FRONT GATE TO ESCAPE!' : 'The Occult Crypt. Approach the Altar and grab the Cursed Horned Skull!';
+      obj.textContent = hasRelic ? 'Alarm raised. Get back to the front gate' : 'Take the horned skull from the altar';
     } else {
-      // Corridor
-      this.ambientLight.color.setHex(0x505870);
-      this.ambientLight.intensity = 1.2;
-      document.getElementById('obj-text').textContent = this.hasRelic ? 'RUN TO THE FRONT GATE AND ESCAPE!' : (this.hasKey ? 'Proceed forward to unlock the Crypt Gate.' : 'Explore the rooms. Parlor to the Left, Bedroom to the Right.');
+      obj.textContent = hasRelic ? 'Run to the front gate' : (hasKey ? 'Unlock the crypt gate at the end of the hall' : 'Find the silver key. Parlor on the left, bedroom on the right');
     }
 
-    // Setup Room Portals / Doorways
+    // A hunting entity follows you through the door
+    if (this.entity && this.entityState === 'HUNT') {
+      this.entityRoom = roomId;
+      this.placeEntityAway();
+    } else if (this.entity) {
+      this.entity.visible = false;
+    }
+
     this.setupRoomDoorways(roomId);
   }
 
   setupRoomDoorways(roomId) {
     this.interactiveObjects = [];
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
     if (roomId === 'corridor') {
-      // 1. Enter Parlor (Left doorway)
       this.interactiveObjects.push({
-        name: 'door_parlor',
-        pos: new THREE.Vector3(-6, 1.2, 0),
-        prompt: 'ENTER VICTORIAN PARLOR',
+        name: 'door_parlor', pos: V(-2, 1.2, -3), prompt: 'Enter parlor',
         action: () => this.switchRoom('parlor')
       });
-
-      // 2. Enter Bedroom (Right doorway)
       this.interactiveObjects.push({
-        name: 'door_bedroom',
-        pos: new THREE.Vector3(6, 1.2, 0),
-        prompt: 'ENTER MOONLIT BEDROOM',
+        name: 'door_bedroom', pos: V(2, 1.2, -3), prompt: 'Enter bedroom',
         action: () => this.switchRoom('bedroom')
       });
-
-      // 3. Unlock / Enter Crypt (Ahead at end of hall)
       this.interactiveObjects.push({
-        name: 'door_crypt',
-        pos: new THREE.Vector3(0, 1.2, -7),
-        prompt: this.cryptUnlocked ? 'ENTER OCCULT CRYPT' : 'UNLOCK CRYPT GATE [REQUIRES SILVER KEY]',
+        name: 'door_crypt', pos: V(0, 1.2, -11.8),
+        prompt: this.cryptUnlocked ? 'Enter crypt' : 'Unlock crypt gate (needs silver key)',
         action: () => {
           if (this.cryptUnlocked) {
             this.switchRoom('crypt');
@@ -437,60 +930,49 @@ class HorrorGame {
             this.playProceduralSound('door');
             this.switchRoom('crypt');
           } else {
-            document.getElementById('obj-text').textContent = 'GATE LOCKED! Go to the Moonlit Bedroom to find the Silver Key!';
+            document.getElementById('obj-text').textContent = 'Gate locked. The silver key is in the bedroom';
           }
         }
       });
-
-      // 4. Exit Manor Gate (Behind player)
       this.interactiveObjects.push({
-        name: 'exit_gate',
-        pos: new THREE.Vector3(0, 1.2, 7),
-        prompt: this.hasRelic ? 'ESCAPE THE MANOR!' : 'LOCKED WITH HELL-CHAINS [REQUIRES CURSED SKULL]',
+        name: 'exit_gate', pos: V(0, 1.2, 11.8),
+        prompt: this.hasRelic ? 'Escape the manor' : 'Sealed (needs the skull)',
         action: () => {
           if (this.hasRelic) {
             this.triggerVictory();
           } else {
-            document.getElementById('obj-text').textContent = 'The exit is sealed by an ancient curse! Retrieve the skull from the crypt first!';
+            document.getElementById('obj-text').textContent = 'The exit is sealed. Bring the skull from the crypt first';
           }
         }
       });
     } else {
-      // In Bedroom, Parlor, or Crypt: Doorway leads back to Corridor
       this.interactiveObjects.push({
-        name: 'door_corridor',
-        pos: new THREE.Vector3(0, 1.2, 6.5),
-        prompt: 'EXIT TO CORRIDOR',
+        name: 'door_corridor', pos: V(0, 1.2, 5.9), prompt: 'Back to corridor',
         action: () => this.switchRoom('corridor')
       });
 
-      // Special items in rooms:
       if (roomId === 'bedroom' && !this.hasKey) {
         this.interactiveObjects.push({
-          name: 'silver_key',
-          pos: new THREE.Vector3(4.5, 1.1, -4.5),
-          prompt: 'PICK UP SILVER KEY',
+          name: 'silver_key', pos: V(4.1, 1.3, -4.5), prompt: 'Take silver key',
           action: () => {
             this.hasKey = true;
             this.silverKeyMesh.visible = false;
             this.keyLight.visible = false;
             this.playProceduralSound('pickup');
-            document.getElementById('obj-text').textContent = 'Silver Key Acquired! Return to the Corridor to unlock the Crypt.';
+            document.getElementById('obj-text').textContent = 'Silver key taken. Return to the corridor to unlock the crypt';
           }
         });
       }
 
       if (roomId === 'crypt' && !this.hasRelic) {
         this.interactiveObjects.push({
-          name: 'cursed_relic',
-          pos: new THREE.Vector3(0, 1.1, -5.5),
-          prompt: 'GRAB THE CURSED HORNED SKULL [TRIGGER EXTRACTION]',
+          name: 'cursed_relic', pos: V(0, 1.4, -5.6), prompt: 'Take horned skull (starts the alarm)',
           action: () => {
             this.hasRelic = true;
             this.relicMesh.visible = false;
             this.relicLight.visible = false;
             this.playProceduralSound('relic');
-            document.getElementById('obj-text').textContent = 'ALARM TRIGGERED! SPRINT TO THE FRONT DOOR TO ESCAPE!';
+            document.getElementById('obj-text').textContent = 'Alarm raised. Run to the front door';
             this.alertEntity(this.camera.position, 'hunt');
           }
         });
@@ -499,87 +981,135 @@ class HorrorGame {
   }
 
   // ------------------------------------------------------------------------
-  // 4. Stalking Entity AI (Shadow Monster)
+  // 4. Stalking Entity AI
   // ------------------------------------------------------------------------
   initEntity() {
     this.entity = new THREE.Group();
+    const black = new THREE.MeshStandardMaterial({ color: 0x050405, roughness: 1, metalness: 0 });
 
-    // Tall shadowy silhouette
-    const bodyGeo = new THREE.CylinderGeometry(0.35, 0.6, 2.6, 8);
-    const bodyMat = new THREE.MeshBasicMaterial({ color: 0x020104 });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.y = 1.3;
+    // Tall, thin, too-long limbs
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 1.5, 8), black);
+    torso.position.y = 1.35;
+    const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.07, 0.9, 6), black);
+    legs.position.y = 0.45;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), black);
+    head.scale.set(0.85, 1.25, 0.9);
+    head.position.y = 2.28;
+    const armGeo = new THREE.CylinderGeometry(0.035, 0.025, 1.6, 6);
+    const armL = new THREE.Mesh(armGeo, black);
+    armL.position.set(-0.3, 1.25, 0.05);
+    armL.rotation.z = 0.12;
+    const armR = armL.clone();
+    armR.position.x = 0.3;
+    armR.rotation.z = -0.12;
 
-    // Glowing Eyes
-    const eyeGeo = new THREE.SphereGeometry(0.06, 8, 8);
     this.entityEyeMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    const eyeGeo = new THREE.SphereGeometry(0.03, 8, 8);
     const eyeL = new THREE.Mesh(eyeGeo, this.entityEyeMat);
-    eyeL.position.set(-0.14, 2.3, 0.3);
-    const eyeR = new THREE.Mesh(eyeGeo, this.entityEyeMat);
-    eyeR.position.set(0.14, 2.3, 0.3);
+    eyeL.position.set(-0.07, 2.3, 0.14);
+    const eyeR = eyeL.clone();
+    eyeR.position.x = 0.07;
 
-    this.entityGlow = new THREE.PointLight(0xff5500, 1.5, 6);
-    this.entityGlow.position.set(0, 2.2, 0.3);
+    this.entityGlow = new THREE.PointLight(0xff5500, 0.8, 4, 2);
+    this.entityGlow.position.set(0, 2.2, 0.4);
 
-    this.entity.add(bodyMesh, eyeL, eyeR, this.entityGlow);
-    this.entity.position.set(0, 0, -18);
+    [torso, legs, head, armL, armR].forEach(m => { m.castShadow = true; });
+    this.entity.add(torso, legs, head, armL, armR, eyeL, eyeR, this.entityGlow);
     this.entity.visible = false;
     this.scene.add(this.entity);
+
+    this.investigateTimer = 0;
+    this.entityStunCooldown = 0;
+  }
+
+  // Put the entity at the spot in the current room that is farthest from the player
+  placeEntityAway() {
+    const room = this.rooms[this.currentRoom];
+    const b = room.bounds, m = 0.9;
+    const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
+    const spots = [
+      [b.minX + m, b.minZ + m], [b.maxX - m, b.minZ + m],
+      [b.minX + m, b.maxZ - m], [b.maxX - m, b.maxZ - m],
+      [cx, b.minZ + m], [cx, b.maxZ - m]
+    ];
+    const p = this.camera.position;
+    let best = spots[0], bestD = -1;
+    spots.forEach(s => {
+      const d = Math.hypot(s[0] - p.x, s[1] - p.z);
+      if (d > bestD) { bestD = d; best = s; }
+    });
+    this.entity.position.set(best[0], 0, best[1]);
+    this.entity.visible = true;
+  }
+
+  moveEntityToward(speed, delta) {
+    const p = this.camera.position, e = this.entity.position;
+    const dx = p.x - e.x, dz = p.z - e.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const b = this.rooms[this.currentRoom].bounds;
+    e.x = Math.max(b.minX + 0.4, Math.min(b.maxX - 0.4, e.x + (dx / len) * speed * 1));
+    e.z = Math.max(b.minZ + 0.4, Math.min(b.maxZ - 0.4, e.z + (dz / len) * speed * 1));
+    this.entity.rotation.y = Math.atan2(dx, dz);
+    this.entityDistance = Math.hypot(p.x - e.x, p.z - e.z);
   }
 
   updateEntity(delta) {
     if (!this.entity || this.isDead || this.hasWon) return;
 
-    // Flashlight stun mechanic
-    if (this.isFlashlightOn && this.entity.visible) {
+    if (this.entityStunCooldown > 0) this.entityStunCooldown -= delta;
+
+    const active = this.entityState === 'HUNT' || this.entityState === 'INVESTIGATE';
+    if (!active) {
+      this.entity.visible = false;
+      return;
+    }
+
+    this.entity.visible = (this.entityRoom === this.currentRoom);
+
+    // Investigation fades out if you stay quiet
+    if (this.entityState === 'INVESTIGATE') {
+      this.investigateTimer -= delta;
+      if (this.investigateTimer <= 0) {
+        this.entityState = 'PATROL';
+        this.entity.visible = false;
+        document.getElementById('threat-alert').style.display = 'none';
+        return;
+      }
+    }
+
+    const hunting = this.entityState === 'HUNT';
+    this.entityEyeMat.color.setHex(hunting ? 0xff1a1a : 0xff8a00);
+    this.entityGlow.color.setHex(hunting ? 0xff1a1a : 0xff7700);
+
+    // Flashlight stun: a short stagger and a shove back, then it needs time to recover
+    if (this.isFlashlightOn && this.entity.visible && this.entityStunTimer <= 0 && this.entityStunCooldown <= 0) {
       const camDir = new THREE.Vector3();
       this.camera.getWorldDirection(camDir);
-      const toEntity = this.entity.position.clone().sub(this.camera.position).normalize();
-      const dot = camDir.dot(toEntity);
-
-      if (dot > 0.88 && this.entityDistance < 10 && this.entityStunTimer <= 0) {
-        this.entityStunTimer = 2.0; // Stun for 2 seconds
+      const toEntity = this.entity.position.clone().add(new THREE.Vector3(0, 1.4, 0)).sub(this.camera.position).normalize();
+      if (camDir.dot(toEntity) > 0.93 && this.entityDistance < 9) {
+        this.entityStunTimer = 1.6;
+        this.entityStunCooldown = 6;
+        const away = this.entity.position.clone().sub(this.camera.position).setY(0).normalize().multiplyScalar(2.5);
+        const b = this.rooms[this.currentRoom].bounds;
+        this.entity.position.x = Math.max(b.minX + 0.4, Math.min(b.maxX - 0.4, this.entity.position.x + away.x));
+        this.entity.position.z = Math.max(b.minZ + 0.4, Math.min(b.maxZ - 0.4, this.entity.position.z + away.z));
         this.playProceduralSound('stun');
       }
     }
 
     if (this.entityStunTimer > 0) {
       this.entityStunTimer -= delta;
+      this.entity.position.y = 0;
+      this.entity.rotation.z = Math.sin(performance.now() * 0.06) * 0.08;
       return;
     }
+    this.entity.rotation.z = Math.sin(performance.now() * 0.004) * 0.03;
 
-    // Entity Room Tracking & Hunting
-    if (this.entityState === 'HUNT') {
-      this.entity.visible = true;
-      this.entityEyeMat.color.setHex(0xff0000);
-      this.entityGlow.color.setHex(0xff0000);
+    if (!this.entity.visible) return;
+    this.moveEntityToward((hunting ? this.entityHuntSpeed : this.entitySpeed) * delta, delta);
 
-      // Advance directly towards camera
-      const dir = this.camera.position.clone().sub(this.entity.position).normalize();
-      this.entity.position.addScaledVector(dir, this.entityHuntSpeed * delta);
-      this.entity.lookAt(this.camera.position.x, this.entity.position.y, this.camera.position.z);
-
-      this.entityDistance = this.entity.position.distanceTo(this.camera.position);
-
-      // Jumpscare collision
-      if (this.entityDistance < 1.4) {
-        this.triggerDeath();
-      }
-    } else if (this.entityState === 'INVESTIGATE') {
-      this.entity.visible = (this.entityRoom === this.currentRoom);
-      this.entityEyeMat.color.setHex(0xff7700);
-      this.entityGlow.color.setHex(0xff7700);
-
-      const dir = this.camera.position.clone().sub(this.entity.position).normalize();
-      this.entity.position.addScaledVector(dir, this.entitySpeed * delta);
-      this.entity.lookAt(this.camera.position.x, this.entity.position.y, this.camera.position.z);
-
-      if (this.entity.position.distanceTo(this.camera.position) < 1.4) {
-        this.triggerDeath();
-      }
-    } else {
-      // PATROL: Entity stays in background
-      this.entity.visible = false;
+    if (this.entityDistance < 1.0) {
+      this.triggerDeath();
     }
   }
 
@@ -589,35 +1119,23 @@ class HorrorGame {
     const alertBanner = document.getElementById('threat-alert');
 
     if (severity === 'hunt' || this.hasRelic) {
+      if (this.entityState === 'HUNT') return;
       this.entityState = 'HUNT';
       this.entityRoom = this.currentRoom;
-      this.entity.position.set(0, 0, -14).applyQuaternion(this.camera.quaternion).add(this.camera.position);
-      this.entity.position.y = 0;
-      this.entity.visible = true;
-
-      alertBanner.textContent = '⚠️ ENTITY DETECTED YOUR VOICE! IT IS SPRINTING FOR YOU! ⚠️';
+      this.placeEntityAway();
+      alertBanner.textContent = 'It heard you and is coming';
       alertBanner.style.display = 'block';
       this.playProceduralSound('roar');
-    } else {
-      if (this.entityState !== 'HUNT') {
-        this.entityState = 'INVESTIGATE';
-        this.entityRoom = this.currentRoom;
-        this.entity.position.set(0, 0, -16).applyQuaternion(this.camera.quaternion).add(this.camera.position);
-        this.entity.position.y = 0;
-        this.entity.visible = true;
-
-        alertBanner.textContent = '⚠️ HEARD A SOUND! ENTITY IS INVESTIGATING! ⚠️';
-        alertBanner.style.display = 'block';
-        this.playProceduralSound('growl');
-
-        setTimeout(() => {
-          if (this.entityState === 'INVESTIGATE') {
-            this.entityState = 'PATROL';
-            this.entity.visible = false;
-            alertBanner.style.display = 'none';
-          }
-        }, 5500);
-      }
+    } else if (this.entityState === 'PATROL') {
+      this.entityState = 'INVESTIGATE';
+      this.entityRoom = this.currentRoom;
+      this.investigateTimer = 8;
+      this.placeEntityAway();
+      alertBanner.textContent = 'It heard something and is investigating';
+      alertBanner.style.display = 'block';
+      this.playProceduralSound('growl');
+    } else if (this.entityState === 'INVESTIGATE') {
+      this.investigateTimer = Math.max(this.investigateTimer, 4);
     }
   }
 
@@ -652,21 +1170,21 @@ class HorrorGame {
       this.keys[e.code] = true;
 
       // Toggle Crouch (C or Control)
-      if (e.code === 'KeyC' || e.code === 'ControlLeft') {
+      if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !e.repeat) {
         this.isCrouching = !this.isCrouching;
-        document.getElementById('stance-indicator').textContent = this.isCrouching ? 'STANCE: CROUCHING (SILENT)' : 'STANCE: STANDING';
+        document.getElementById('stance-indicator').textContent = this.isCrouching ? 'Crouching' : 'Standing';
       }
 
       // Toggle Flashlight (F)
       if (e.code === 'KeyF') {
         this.isFlashlightOn = !this.isFlashlightOn;
-        this.flashlight.intensity = this.isFlashlightOn ? 5.5 : 0;
-        if (this.playerFillLight) this.playerFillLight.intensity = this.isFlashlightOn ? 1.8 : 0.8;
+        this.flashlight.intensity = this.isFlashlightOn ? this.flashlightBase : 0;
+        if (this.playerFillLight) this.playerFillLight.intensity = this.isFlashlightOn ? this.fillOn : this.fillOff;
         this.playProceduralSound('click');
       }
 
       // Interact (E)
-      if (e.code === 'KeyE') {
+      if (e.code === 'KeyE' && !e.repeat) {
         this.triggerCurrentInteraction();
       }
     });
@@ -702,7 +1220,8 @@ class HorrorGame {
 
     // Camera height adjustment for crouching
     const targetHeight = this.isCrouching ? this.crouchHeight : this.playerHeight;
-    this.camera.position.y += (targetHeight - this.camera.position.y) * 10 * delta;
+    this.camHeight += (targetHeight - this.camHeight) * Math.min(1, 10 * delta);
+    let moving = false;
 
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     forward.y = 0;
@@ -719,19 +1238,14 @@ class HorrorGame {
     if (moveVector.lengthSq() > 0) {
       moveVector.normalize().multiplyScalar(targetSpeed * delta);
       
-      const newPos = this.camera.position.clone().add(moveVector);
+      // Slide along walls and furniture by testing each axis on its own
+      const nx = this.camera.position.x + moveVector.x;
+      const nz = this.camera.position.z + moveVector.z;
+      if (this.canStandAt(nx, this.camera.position.z)) this.camera.position.x = nx;
+      if (this.canStandAt(this.camera.position.x, nz)) this.camera.position.z = nz;
+      moving = true;
 
-      // Clamp movement within room sphere (radius 7.5m)
-      const distFromCenter = new THREE.Vector2(newPos.x, newPos.z).length();
-      if (distFromCenter < 7.5) {
-        this.camera.position.x = newPos.x;
-        this.camera.position.z = newPos.z;
-      }
-
-      // Head Bobbing
-      this.headBobTimer += delta * (this.isSprinting ? 14 : 9);
-      const bob = Math.sin(this.headBobTimer) * (this.isSprinting ? 0.08 : 0.04);
-      this.camera.position.y += bob;
+      this.headBobTimer += delta * (this.isSprinting ? 12 : (this.isCrouching ? 6 : 8));
 
       // Footstep Sounds
       const interval = this.isSprinting ? 320 : (this.isCrouching ? 680 : 480);
@@ -746,6 +1260,22 @@ class HorrorGame {
         }
       }
     }
+
+    // Head bob eases in and out instead of snapping
+    const bobTarget = moving ? (this.isSprinting ? 0.06 : (this.isCrouching ? 0.012 : 0.03)) : 0;
+    this.bobAmp += (bobTarget - this.bobAmp) * Math.min(1, 8 * delta);
+    this.camera.position.y = this.camHeight + Math.sin(this.headBobTimer) * this.bobAmp;
+  }
+
+  canStandAt(x, z) {
+    const room = this.activeRoom;
+    if (!room) return true;
+    const b = room.bounds, r = 0.35;
+    if (x < b.minX + r || x > b.maxX - r || z < b.minZ + r || z > b.maxZ - r) return false;
+    for (const c of room.colliders) {
+      if (x > c[0] - r && x < c[1] + r && z > c[2] - r && z < c[3] + r) return false;
+    }
+    return true;
   }
 
   checkRaycastInteractions() {
@@ -760,12 +1290,12 @@ class HorrorGame {
     const reticle = document.getElementById('reticle');
 
     let closest = null;
-    let minAngle = 0.35; // cone angle in radians
+    let minAngle = 0.5; // cone angle in radians
 
     for (let item of this.interactiveObjects) {
       const toItem = item.pos.clone().sub(this.camera.position);
       const dist = toItem.length();
-      if (dist < 8.0) {
+      if (dist < 3.6) {
         toItem.normalize();
         const angle = camDir.angleTo(toItem);
         if (angle < minAngle) {
@@ -808,10 +1338,10 @@ class HorrorGame {
         this.setupAudioAnalyser(this.micStream);
         this.micActive = true;
         btnMic.classList.add('active');
-        micLabel.textContent = 'Active (Live decibels connected)';
+        micLabel.textContent = 'Connected, live level';
       } catch (err) {
         console.warn('Microphone error:', err);
-        alert('Could not access microphone. The game will still detect your in-game movement noise!');
+        alert('Could not access the microphone. The game will still pick up in-game movement noise.');
       }
     });
 
@@ -827,10 +1357,10 @@ class HorrorGame {
         fallback.style.display = 'none';
         this.camActive = true;
         btnCam.classList.add('active');
-        camLabel.textContent = 'Active (Night-Vision live)';
+        camLabel.textContent = 'Connected, night vision on';
       } catch (err) {
         console.warn('Camera error:', err);
-        alert('Could not access camera. Simulation mode will run.');
+        alert('Could not access the camera. The bodycam will stay offline.');
       }
     });
   }
@@ -878,19 +1408,19 @@ class HorrorGame {
     // Alert thresholds
     if (decibels >= this.micThreshold) {
       if (status) {
-        status.textContent = 'CRITICAL • TOO LOUD!';
-        status.style.color = '#ff2b2b';
+        status.textContent = 'Too loud';
+        status.dataset.level = 'danger';
       }
       this.alertEntity(this.camera.position, decibels > 55 ? 'hunt' : 'investigate');
     } else if (decibels > this.micThreshold * 0.5) {
       if (status) {
-        status.textContent = 'CAUTION • BREATHING AUDIBLE';
-        status.style.color = '#ffaa00';
+        status.textContent = 'Breathing audible';
+        status.dataset.level = 'caution';
       }
     } else {
       if (status) {
-        status.textContent = 'SAFE • STAY SILENT';
-        status.style.color = '#39ff14';
+        status.textContent = 'Quiet';
+        status.dataset.level = 'safe';
       }
     }
   }
@@ -1015,6 +1545,7 @@ class HorrorGame {
     btnPlay.addEventListener('click', () => {
       startModal.style.display = 'none';
       this.isPlaying = true;
+      this.startTime = performance.now();
       this.startAmbientDrone();
       this.container.requestPointerLock();
     });
@@ -1033,13 +1564,19 @@ class HorrorGame {
         const isHunting = (this.entityState === 'HUNT');
         const base = isHunting ? 152 : 94;
         const jitter = Math.floor(Math.random() * 8) - 4;
-        bpmEl.textContent = `♥ ${base + jitter} BPM`;
+        bpmEl.textContent = `${base + jitter} bpm`;
       }
     }, 1100);
   }
 
+  formatElapsed() {
+    const s = Math.round((performance.now() - (this.startTime || performance.now())) / 1000);
+    return `m ${String(s % 60).padStart(2, '0')}s`;
+  }
+
   triggerDeath() {
     this.isDead = true;
+    document.getElementById('death-stats').textContent = `Time survived  ${this.formatElapsed()}`;
     this.playProceduralSound('jumpscare');
 
     const scareOverlay = document.getElementById('jumpscare-overlay');
@@ -1054,6 +1591,7 @@ class HorrorGame {
 
   triggerVictory() {
     this.hasWon = true;
+    document.getElementById('win-stats').textContent = `Escape time  ${this.formatElapsed()}`;
     document.exitPointerLock();
     document.getElementById('victory-modal').style.display = 'flex';
   }
@@ -1062,51 +1600,79 @@ class HorrorGame {
     requestAnimationFrame(() => this.animate());
 
     const delta = Math.min(this.clock.getDelta(), 0.1);
+    const time = this.clock.elapsedTime;
 
     if (this.isPlaying && !this.isDead && !this.hasWon) {
       this.updateMovement(delta);
       this.checkRaycastInteractions();
       this.updateEntity(delta);
       this.updateMicrophoneTracking();
-
-      // Animate Particles
-      if (this.fireEmbers && this.fireEmbers.visible) {
-        const pos = this.fireEmbers.geometry.attributes.position.array;
-        for (let i = 1; i < pos.length; i += 3) {
-          pos[i] += delta * 0.8;
-          if (pos[i] > 3.0) pos[i] = 0;
-        }
-        this.fireEmbers.geometry.attributes.position.needsUpdate = true;
-      }
-
-      if (this.greenSmoke && this.greenSmoke.visible) {
-        const pos = this.greenSmoke.geometry.attributes.position.array;
-        for (let i = 1; i < pos.length; i += 3) {
-          pos[i] += delta * 0.5;
-          if (pos[i] > 2.5) pos[i] = -0.5;
-        }
-        this.greenSmoke.geometry.attributes.position.needsUpdate = true;
-      }
-
-      // Pumpkin Candlelight Flicker
-      for (let p of this.pumpkins) {
-        p.light.intensity = p.base + (Math.random() - 0.5) * 0.4;
-      }
-
-      // Rotate Silver Key and Relic
-      if (this.silverKeyMesh && this.silverKeyMesh.visible) {
-        this.silverKeyMesh.rotation.y += delta * 1.6;
-      }
-      if (this.relicMesh && this.relicMesh.visible) {
-        this.relicMesh.rotation.y += delta * 0.9;
-      }
     }
 
+    this.updateAtmosphere(delta, time);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // Candle flicker, drifting particles and small prop animation
+  updateAtmosphere(delta, time) {
+    for (const f of this.flicker) {
+      if (f.room !== this.currentRoom) continue;
+      const n = 0.5 * Math.sin(time * f.speed + f.phase) + 0.3 * Math.sin(time * f.speed * 2.7 + f.phase * 1.3) + (Math.random() - 0.5) * 0.3;
+      f.light.intensity = f.base * (1 + f.amp * n);
+    }
+
+    // The flashlight stutters while something is hunting you
+    if (this.isFlashlightOn && this.flashlight) {
+      const hunted = this.entityState === 'HUNT' && Math.random() < 0.04;
+      this.flashlight.intensity = hunted ? this.flashlightBase * 0.25 : this.flashlightBase;
+    }
+
+    // Dust follows the player
+    if (this.dustParticles) {
+      this.dustParticles.position.set(this.camera.position.x, 0, this.camera.position.z);
+      const pos = this.dustParticles.geometry.attributes.position.array;
+      for (let i = 0; i < pos.length; i += 3) {
+        pos[i + 1] += delta * 0.03;
+        pos[i] += Math.sin(time * 0.3 + i) * delta * 0.02;
+        if (pos[i + 1] > 3) pos[i + 1] = 0;
+      }
+      this.dustParticles.geometry.attributes.position.needsUpdate = true;
+    }
+
+    if (this.currentRoom === 'parlor' && this.fireEmbers) {
+      const pos = this.fireEmbers.geometry.attributes.position.array;
+      for (let i = 1; i < pos.length; i += 3) {
+        pos[i] += delta * (0.5 + (i % 5) * 0.12);
+        if (pos[i] > 1.8) pos[i] = 0.1;
+      }
+      this.fireEmbers.geometry.attributes.position.needsUpdate = true;
+      (this.fireFlames || []).forEach((f, i) => {
+        f.scale.y = 0.85 + 0.3 * Math.sin(time * 9 + i * 2) + Math.random() * 0.1;
+        f.scale.x = f.scale.z = 0.9 + 0.15 * Math.sin(time * 7 + i);
+      });
+    }
+
+    if (this.currentRoom === 'crypt' && this.greenSmoke) {
+      const pos = this.greenSmoke.geometry.attributes.position.array;
+      for (let i = 1; i < pos.length; i += 3) {
+        pos[i] += delta * 0.18;
+        if (pos[i] > 1.6) pos[i] = 0;
+      }
+      this.greenSmoke.geometry.attributes.position.needsUpdate = true;
+    }
+
+    if (this.silverKeyMesh && this.silverKeyMesh.visible) {
+      this.silverKeyMesh.rotation.y += delta * 1.4;
+      this.silverKeyMesh.position.y = 1.32 + Math.sin(time * 2) * 0.03;
+    }
+    if (this.relicMesh && this.relicMesh.visible) {
+      this.relicMesh.rotation.y += delta * 0.8;
+      this.relicMesh.position.y = 1.4 + Math.sin(time * 1.6) * 0.04;
+    }
   }
 }
 
 // Start Game on load
 window.addEventListener('load', () => {
-  new HorrorGame();
+  window.__game = new HorrorGame();
 });
