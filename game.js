@@ -1,1678 +1,645 @@
+'use strict';
 // ==========================================================================
 // SILENT SHADOWS: THE SAMHAIN EXTRACTION
-// Immersive Photographic First-Person Horror Engine (Three.js WebGL + WebRTC + Web Audio)
+// HorrorGame: renderer, camera, input, main loop. Systems live in other files:
+//   core / world-data / audio / items / interact / doors / world / spots / rooms /
+//   decor / hiding / ghost / ghost-ai / jumpscares / director / hud / run / debug
 // ==========================================================================
-
 class HorrorGame {
   constructor() {
     this.container = document.getElementById('game-container');
-
-    // Game States & Objectives
-    this.isPlaying = false;
-    this.isDead = false;
-    this.hasWon = false;
-    this.hasKey = false;
-    this.hasRelic = false;
-    this.cryptUnlocked = false;
-
-    // Current Room: 'corridor', 'bedroom', 'parlor', 'crypt'
-    this.currentRoom = 'corridor';
-
-    // First-Person Camera & Controls
-    this.camera = null;
-    this.scene = null;
-    this.renderer = null;
-    this.flashlight = null;
-    this.flashlightTarget = null;
-    this.isFlashlightOn = true;
-    this.isCrouching = false;
-    this.isSprinting = false;
-
-    this.playerHeight = 1.7;
-    this.crouchHeight = 1.1;
-    this.velocity = new THREE.Vector3();
-    this.keys = {};
-    this.headBobTimer = 0;
-    this.camHeight = this.playerHeight;
-    this.bobAmp = 0;
-    this.flicker = [];
-    this.activeRoom = null;
-    this.currentInteractable = null;
-
-    // Room Enclosure & Interactive Meshes
-    this.roomSpheres = {};
-    this.currentRoomMesh = null;
-    this.roomTransitions = [];
-    this.interactiveObjects = [];
-    this.silverKeyMesh = null;
-    this.relicMesh = null;
-    this.relicLight = null;
-
-    // Room-specific particle systems
-    this.dustParticles = null;
-    this.fireEmbers = null;
-    this.greenSmoke = null;
-
-    // Stalking Entity AI
-    this.entity = null;
-    this.entityState = 'PATROL'; // PATROL, INVESTIGATE, HUNT
-    this.entityRoom = 'corridor';
-    this.entityDistance = 18; // distance to player
-    this.entitySpeed = 1.8;
-    this.entityHuntSpeed = 4.8;
-    this.entityGlow = null;
-    this.entityEyeMat = null;
-    this.entityStunTimer = 0;
-
-    // Hardware Sensors
-    this.micActive = false;
-    this.camActive = false;
-    this.audioCtx = null;
-    this.analyser = null;
-    this.micStream = null;
-    this.micThreshold = 35;
-    this.currentDecibels = 0;
-
-    // Procedural Audio
-    this.synthCtx = null;
-    this.ambientDroneOsc = null;
-    this.lastFootstepTime = 0;
-
-    // Mouse Look (Euler Yaw / Pitch)
-    this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
-    this.minPolarAngle = -Math.PI / 2.3;
-    this.maxPolarAngle = Math.PI / 2.3;
-    this.isLocked = false;
-
+    this.cfg = CONFIG.difficulties.normal;
+    this.access = { reduceFlashing: false, reduceScares: false, subtitles: true };
+    this.keys = {}; this.isLocked = false;
+    this.isPlaying = false; this.isDead = false; this.hasWon = false;
+    this.transitioning = false; this.inputLocked = false; this.testMode = false;
+    this.clockT = 0; this.time = 0; this.stage = 0;
+    this.currentRoom = 'corridor'; this.room = null; this.currentRoomChanged = false;
+    this.unlocked = new Set(); this.prevLayout = null; this.seed = '';
+    this.flashlightOn = true; this.battery = 100; this.lighterOn = false; this.flashFlicker = 0;
+    this.isCrouching = false; this.isSprinting = false;
+    this.micActive = false; this.camActive = false; this.micLevel = 0; this.analyser = null; this.audioCtx = null;
+    this.redAlert = false; this.looseItems = []; this.shakeA = 0; this.look = null;
+    this.camHeight = CONFIG.player.eye; this.bobAmp = 0; this.headBob = 0; this.lastStep = 0;
+    this.euler = new THREE.Euler(0, 0, 0, 'YXZ'); this.baseFov = CONFIG.player.fov;
+    this.lagDir = new THREE.Vector3(0, 0, -1);
     this.clock = new THREE.Clock();
 
-    this.initHUD();
-    this.initHardwareSetup();
     this.initThree();
-    this.buildImmersiveRooms();
-    this.initEntity();
+    this.tweens = new Tweens();
+    this.audio = new AudioEngine(this);
+    this.inventory = new Inventory(this);
+    this.hud = new HUD(this);
+    this.world = new World(this);
+    this.interact = new InteractionSystem(this);
+    this.hiding = new Hiding(this);
+    this.scares = new Jumpscares(this);
+    this.fear = new FearSystem(this);
+    this.screenFX = new ScreenFX(this);
+    this.atmosphere = new Atmosphere(this);
+    this.director = new ScareDirector(this);
+    this.ghost = new Ghost(this);
+    this.initHardware();
+    this.initMenu();
     this.setupEvents();
-    this.switchRoom('corridor', false);
+    this.newRun(null);
+    this.warmup();
+    this.hud.setBattery(100);
     this.animate();
   }
 
   // ------------------------------------------------------------------------
-  // 1. Three.js Engine Setup
+  // Renderer, lights
   // ------------------------------------------------------------------------
   initThree() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x030203);
     this.scene.fog = new THREE.FogExp2(0x060508, 0.07);
-
-    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.05, 80);
-    this.camera.position.set(0, this.playerHeight, 0);
+    this.camera = new THREE.PerspectiveCamera(CONFIG.player.fov, innerWidth / innerHeight, 0.05, 80);
+    this.camera.position.set(0, CONFIG.player.eye, 9);
     this.scene.add(this.camera);
-
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.25;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
-    // Flashlight: a narrow, shadow casting cone that sways slightly with the head
-    this.flashlightBase = 2.8;
-    this.flashlight = new THREE.SpotLight(0xfff1dc, this.flashlightBase, 24, Math.PI / 6, 0.55, 1.3);
-    this.flashlight.position.set(0.18, -0.16, 0);
+    // Flashlight lives in the scene (not on the camera) so the beam can lag behind the view
+    this.flashBase = 2.8;
+    this.flashlight = new THREE.SpotLight(0xfff1dc, this.flashBase, 24, Math.PI / 6, 0.55, 1.3);
     this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.set(1024, 1024);
-    this.flashlight.shadow.camera.near = 0.1;
-    this.flashlight.shadow.camera.far = 24;
-    this.flashlight.shadow.bias = -0.0004;
-    this.flashlightTarget = new THREE.Object3D();
-    this.flashlightTarget.position.set(0, 0, -8);
-    this.camera.add(this.flashlight);
-    this.camera.add(this.flashlightTarget);
-    this.flashlight.target = this.flashlightTarget;
-
-    // Faint glow around the player so nearby floor never goes fully black
-    this.fillOn = 0.5;
-    this.fillOff = 0.12;
-    this.playerFillLight = new THREE.PointLight(0xffe2c0, this.fillOn, 7, 2);
-    this.camera.add(this.playerFillLight);
-
-    this.ambientLight = new THREE.AmbientLight(0x505870, 0.4);
-    this.scene.add(this.ambientLight);
-
-    this.initParticleSystems();
+    this.flashlight.shadow.mapSize.set(1024, 1024); this.flashlight.shadow.camera.near = 0.1; this.flashlight.shadow.camera.far = 24; this.flashlight.shadow.bias = -0.0004;
+    this.flashTarget = new THREE.Object3D();
+    this.scene.add(this.flashlight, this.flashTarget); this.flashlight.target = this.flashTarget;
+    // faint glow around the player so nearby floor is never fully black
+    this.fillOn = 0.5; this.fillOff = 0.12;
+    this.fillLight = new THREE.PointLight(0xffe2c0, this.fillOn, 7, 2); this.camera.add(this.fillLight);
+    // lighter flame (intensity only, never toggled, to keep shaders stable)
+    this.lighterLight = new THREE.PointLight(0xff9a40, 0, 6, 2); this.camera.add(this.lighterLight); this.lighterLight.position.set(0.25, -0.2, -0.4);
+    this.ambient = new THREE.AmbientLight(0x505870, 0.4); this.scene.add(this.ambient);
+    this.lightningLight = null;
+    // dust motes that follow the player
+    const n = 140, pos = new Float32Array(n * 3);
+    for (let i = 0; i < n * 3; i += 3) { pos[i] = (Math.random() - 0.5) * 8; pos[i + 1] = Math.random() * 3; pos[i + 2] = (Math.random() - 0.5) * 8; }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xd9d2c4, size: 0.025, transparent: true, opacity: 0.35, depthWrite: false }));
+    this.dust.frustumCulled = false; this.scene.add(this.dust);
   }
 
-  initParticleSystems() {
-    // Dust drifts in a box that follows the player, so every room feels like it has air in it
-    const dustCount = 160;
-    const dustPos = new Float32Array(dustCount * 3);
-    for (let i = 0; i < dustCount * 3; i += 3) {
-      dustPos[i] = (Math.random() - 0.5) * 8;
-      dustPos[i + 1] = Math.random() * 3;
-      dustPos[i + 2] = (Math.random() - 0.5) * 8;
-    }
-    const dustGeo = new THREE.BufferGeometry();
-    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-    this.dustParticles = new THREE.Points(
-      dustGeo,
-      new THREE.PointsMaterial({ color: 0xd9d2c4, size: 0.025, transparent: true, opacity: 0.35, depthWrite: false })
-    );
-    this.dustParticles.frustumCulled = false;
-    this.scene.add(this.dustParticles);
+  // Compile every room's shader variant once, behind the menu, so room changes never hitch
+  warmup() {
+    const rooms = Object.values(this.world.rooms), keep = this.room;
+    rooms.forEach(r => { rooms.forEach(o => { o.group.visible = o === r; }); this.renderer.compile(this.scene, this.camera); this.renderer.render(this.scene, this.camera); });
+    rooms.forEach(o => { o.group.visible = o === keep; });
   }
+
+  get hasRelic() { return this.inventory.has('relic'); }
+  get hasKey() { return this.inventory.keys().some(k => k.def.keyId !== 'fake'); }
+  eyeHeight() { return this.isCrouching ? CONFIG.player.crouchEye : CONFIG.player.eye; }
+  canAct() { return this.isPlaying && !this.isDead && !this.hasWon && !this.transitioning && !this.inputLocked && !this.hud.noteOpen && (this.isLocked || this.testMode); }
+  spotPos(def) { return { x: def.x, y: 1.0, z: def.z }; }
 
   // ------------------------------------------------------------------------
-  // 2. Procedural Textures
+  // Camera control: pose override, forced look, shake
   // ------------------------------------------------------------------------
-  makeTexture(size, draw, repX = 1, repY = 1) {
-    const c = document.createElement('canvas');
-    c.width = c.height = size;
-    draw(c.getContext('2d'), size);
-    const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(repX, repY);
-    t.encoding = THREE.sRGBEncoding;
-    t.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
-    return t;
-  }
+  setCameraPose(x, y, z, yaw, pitch) { this.camera.position.set(x, y, z); this.euler.set(pitch || 0, yaw, 0, 'YXZ'); }
+  forceLook(target, rate) { this.look = { target, rate: rate || 8 }; }
+  releaseLook() { this.look = null; }
+  cameraShake(a) { this.shakeA = Math.max(this.shakeA, a); }
 
-  speckle(g, s, count, alpha, light = false) {
-    for (let i = 0; i < count; i++) {
-      const v = light ? 255 : 0;
-      g.fillStyle = `rgba(${v},${v},${v},${Math.random() * alpha})`;
-      const r = Math.random() * 2 + 0.5;
-      g.fillRect(Math.random() * s, Math.random() * s, r, r);
+  applyCamera(dt) {
+    const cam = this.camera, t = this.time;
+    if (this.look) {
+      const d = TMP.v1.copy(this.look.target).sub(cam.position);
+      const yaw = Math.atan2(-d.x, -d.z), pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+      this.euler.y += angleDiff(this.euler.y, yaw) * Math.min(1, dt * this.look.rate);
+      this.euler.x += (pitch - this.euler.x) * Math.min(1, dt * this.look.rate);
+    }
+    const f = this.fear.level, sway = f * f;
+    this.shakeA = Math.max(0, this.shakeA - dt * 1.6);
+    const s = this.shakeA;
+    TMP.e1.set(this.euler.x + (Math.random() - 0.5) * s * 0.06 + Math.sin(t * 0.7) * sway * 0.01, this.euler.y + (Math.random() - 0.5) * s * 0.06, (Math.sin(t * 0.9) * sway * 0.02) + (Math.random() - 0.5) * s * 0.05, 'YXZ');
+    cam.quaternion.setFromEuler(TMP.e1);
+    const fov = this.baseFov + (this.isSprinting ? CONFIG.player.sprintFov - CONFIG.player.fov : 0) * 1 + (this.hiding.active ? -8 : 0);
+    if (!this.tweens.list.some(tw => tw.key === 'deathfov')) {
+      cam.fov = damp(cam.fov, fov, 6, dt); cam.updateProjectionMatrix();
     }
   }
 
-  stains(g, s, count, strength) {
-    for (let i = 0; i < count; i++) {
-      const x = Math.random() * s, y = Math.random() * s, r = 30 + Math.random() * 90;
-      const grad = g.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(0,0,0,${strength})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = grad;
-      g.fillRect(x - r, y - r, r * 2, r * 2);
+  // Flashlight: beam trails the view a little, flickers with fear and low battery
+  updateFlashlight(dt) {
+    const cam = this.camera, fwd = TMP.v1.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    this.lagDir.lerp(fwd, Math.min(1, dt * 9)).normalize();
+    const right = TMP.v2.set(1, 0, 0).applyQuaternion(cam.quaternion);
+    this.flashlight.position.copy(cam.position).addScaledVector(right, 0.18).addScaledVector(TMP.v3.set(0, -1, 0), 0.16);
+    this.flashTarget.position.copy(cam.position).addScaledVector(this.lagDir, 8);
+    let on = this.flashlightOn && this.battery > 0 && !(this.hiding.active);
+    let k = on ? 1 : 0;
+    if (on && this.flashFlicker > 0.05 && Math.random() < this.flashFlicker * 0.12) k = this.access.reduceFlashing ? 0.6 : (Math.random() < 0.5 ? 0.1 : 0.5);
+    this.flashlight.intensity = damp(this.flashlight.intensity, this.flashBase * k, k < 0.3 ? 40 : 14, dt);
+    this.fillLight.intensity = this.flashlightOn && this.battery > 0 ? this.fillOn : this.fillOff;
+    this.lighterLight.intensity = this.lighterOn ? 1.1 + Math.sin(this.time * 12) * 0.2 : 0;
+    if (this.flashlightOn && this.isPlaying && !this.isDead) {
+      this.battery = Math.max(0, this.battery - dt * 0.33 * this.cfg.drain * (1 + this.ghost.presence() * 1.8));
+      if (Math.floor(this.battery) !== this.lastBatInt) { this.lastBatInt = Math.floor(this.battery); this.hud.setBattery(this.battery); if (this.battery === 0) this.hud.toast('The flashlight dies'); }
     }
   }
-
-  texWood(hue = 26) {
-    return this.makeTexture(512, (g, s) => {
-      const n = 8, w = s / n;
-      for (let i = 0; i < n; i++) {
-        g.fillStyle = `hsl(${hue + Math.random() * 6},${30 + Math.random() * 10}%,${11 + Math.random() * 7}%)`;
-        g.fillRect(i * w, 0, w, s);
-        for (let k = 0; k < 26; k++) {
-          g.strokeStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.12})`;
-          g.lineWidth = Math.random() * 1.6 + 0.4;
-          const x = i * w + Math.random() * w;
-          g.beginPath();
-          g.moveTo(x, 0);
-          g.bezierCurveTo(x + 4, s * 0.3, x - 4, s * 0.7, x + 2, s);
-          g.stroke();
-        }
-        g.fillStyle = 'rgba(0,0,0,0.65)';
-        g.fillRect(i * w, 0, 2, s);
-        const cut = Math.random() * s;
-        g.fillRect(i * w, cut, w, 2);
-      }
-      this.stains(g, s, 8, 0.28);
-      this.speckle(g, s, 1400, 0.25);
-    });
-  }
-
-  texWall(o) {
-    const [h, sat, l] = o.base;
-    return this.makeTexture(512, (g, s) => {
-      const panelH = Math.round(s * 0.32);
-      const top = s - panelH;
-      g.fillStyle = `hsl(${h},${sat}%,${l}%)`;
-      g.fillRect(0, 0, s, s);
-      for (let x = 0; x < s; x += 32) {
-        g.fillStyle = `hsla(${h},${sat}%,${l + 5}%,0.55)`;
-        g.fillRect(x, 0, 14, top);
-      }
-      g.fillStyle = `hsla(${h},${sat}%,${l + 9}%,0.22)`;
-      for (let y = 24; y < top; y += 48) {
-        for (let x = 16; x < s; x += 32) {
-          g.beginPath();
-          g.moveTo(x, y - 8); g.lineTo(x + 6, y); g.lineTo(x, y + 8); g.lineTo(x - 6, y);
-          g.fill();
-        }
-      }
-      if (o.peel) {
-        for (let i = 0; i < 9; i++) {
-          const x = Math.random() * s, y = Math.random() * top, r = 24 + Math.random() * 60;
-          g.fillStyle = `hsla(${h + 10},12%,${l + 14}%,0.55)`;
-          g.beginPath();
-          for (let a = 0; a < 7; a++) {
-            const ang = (a / 7) * Math.PI * 2, rr = r * (0.55 + Math.random() * 0.6);
-            g.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr * 0.7);
-          }
-          g.fill();
-        }
-      }
-      const gt = g.createLinearGradient(0, 0, 0, top);
-      gt.addColorStop(0, 'rgba(0,0,0,0.55)');
-      gt.addColorStop(0.25, 'rgba(0,0,0,0)');
-      g.fillStyle = gt;
-      g.fillRect(0, 0, s, top);
-      this.stains(g, s, 12, 0.3);
-
-      // Wood wainscot
-      const [ph, ps, pl] = o.panel;
-      g.fillStyle = `hsl(${ph},${ps}%,${pl}%)`;
-      g.fillRect(0, top, s, panelH);
-      for (let i = 0; i < 2; i++) {
-        const px = i * 256 + 28, py = top + 26, pw = 200, phh = panelH - 46;
-        g.fillStyle = 'rgba(0,0,0,0.35)';
-        g.fillRect(px, py, pw, phh);
-        g.strokeStyle = 'rgba(255,255,255,0.1)';
-        g.lineWidth = 2;
-        g.strokeRect(px + 1, py + 1, pw - 2, phh - 2);
-      }
-      g.fillStyle = `hsl(${ph},${ps}%,${pl + 5}%)`;
-      g.fillRect(0, top - 4, s, 8);
-      g.fillStyle = 'rgba(0,0,0,0.5)';
-      g.fillRect(0, top + 4, s, 3);
-      const gb = g.createLinearGradient(0, s - 70, 0, s);
-      gb.addColorStop(0, 'rgba(0,0,0,0)');
-      gb.addColorStop(1, 'rgba(0,0,0,0.6)');
-      g.fillStyle = gb;
-      g.fillRect(0, s - 70, s, 70);
-      this.speckle(g, s, 2200, 0.22);
-    });
-  }
-
-  texStone() {
-    return this.makeTexture(512, (g, s) => {
-      g.fillStyle = '#15171a';
-      g.fillRect(0, 0, s, s);
-      const rows = 8, bh = s / rows;
-      for (let r = 0; r < rows; r++) {
-        const cols = 3, bw = s / cols, off = (r % 2) * (bw / 2);
-        for (let c = -1; c <= cols; c++) {
-          const x = c * bw + off, v = 20 + Math.random() * 14;
-          g.fillStyle = `hsl(${150 + Math.random() * 30},${6 + Math.random() * 6}%,${v}%)`;
-          g.fillRect(x + 3, r * bh + 3, bw - 6, bh - 6);
-          for (let k = 0; k < 4; k++) {
-            g.strokeStyle = `rgba(0,0,0,${Math.random() * 0.3})`;
-            g.beginPath();
-            g.moveTo(x + Math.random() * bw, r * bh + 3);
-            g.lineTo(x + Math.random() * bw, r * bh + bh - 3);
-            g.stroke();
-          }
-        }
-      }
-      const gm = g.createLinearGradient(0, s * 0.6, 0, s);
-      gm.addColorStop(0, 'rgba(40,90,50,0)');
-      gm.addColorStop(1, 'rgba(40,90,50,0.35)');
-      g.fillStyle = gm;
-      g.fillRect(0, s * 0.6, s, s * 0.4);
-      this.stains(g, s, 10, 0.3);
-      this.speckle(g, s, 2600, 0.3);
-    });
-  }
-
-  texPlaster() {
-    return this.makeTexture(256, (g, s) => {
-      g.fillStyle = '#17140f';
-      g.fillRect(0, 0, s, s);
-      this.stains(g, s, 10, 0.4);
-      this.speckle(g, s, 1500, 0.25, true);
-      g.strokeStyle = 'rgba(0,0,0,0.5)';
-      for (let i = 0; i < 4; i++) {
-        g.beginPath();
-        let x = Math.random() * s, y = Math.random() * s;
-        g.moveTo(x, y);
-        for (let k = 0; k < 6; k++) { x += Math.random() * 30 - 15; y += Math.random() * 30; g.lineTo(x, y); }
-        g.stroke();
-      }
-    });
-  }
-
-  texDoor() {
-    return this.makeTexture(256, (g, s) => {
-      g.fillStyle = '#22150d';
-      g.fillRect(0, 0, s, s);
-      for (let k = 0; k < 40; k++) {
-        g.strokeStyle = `rgba(0,0,0,${Math.random() * 0.25})`;
-        const x = Math.random() * s;
-        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 3, s); g.stroke();
-      }
-      g.strokeStyle = 'rgba(255,255,255,0.08)';
-      g.lineWidth = 3;
-      g.strokeRect(36, 28, s - 72, s * 0.38);
-      g.strokeRect(36, s * 0.5, s - 72, s * 0.42);
-      g.strokeStyle = 'rgba(0,0,0,0.6)';
-      g.strokeRect(40, 32, s - 80, s * 0.38 - 8);
-      g.strokeRect(40, s * 0.5 + 4, s - 80, s * 0.42 - 8);
-      this.speckle(g, s, 700, 0.3);
-    });
-  }
-
-  texRug(base) {
-    return this.makeTexture(256, (g, s) => {
-      g.fillStyle = base;
-      g.fillRect(0, 0, s, s);
-      g.strokeStyle = 'rgba(200,170,110,0.45)';
-      g.lineWidth = 6;
-      g.strokeRect(14, 14, s - 28, s - 28);
-      g.lineWidth = 2;
-      g.strokeRect(30, 30, s - 60, s - 60);
-      g.fillStyle = 'rgba(200,170,110,0.28)';
-      for (let y = 56; y < s - 40; y += 36) {
-        g.beginPath();
-        g.moveTo(s / 2, y - 12); g.lineTo(s / 2 + 12, y); g.lineTo(s / 2, y + 12); g.lineTo(s / 2 - 12, y);
-        g.fill();
-      }
-      this.stains(g, s, 6, 0.3);
-      this.speckle(g, s, 2400, 0.3);
-    });
-  }
+  setFlashlight(on) { this.flashlightOn = on; }
 
   // ------------------------------------------------------------------------
-  // 3. Room Construction
-  // ------------------------------------------------------------------------
-  mat(color, rough = 0.8, metal = 0, extra = {}) {
-    return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: rough, metalness: metal }, extra));
-  }
-
-  addMesh(group, geo, material, x, y, z, opts = {}) {
-    const m = new THREE.Mesh(geo, material);
-    m.position.set(x, y, z);
-    if (opts.ry) m.rotation.y = opts.ry;
-    if (opts.rx) m.rotation.x = opts.rx;
-    if (opts.rz) m.rotation.z = opts.rz;
-    m.castShadow = opts.cast !== false;
-    m.receiveShadow = true;
-    group.add(m);
-    return m;
-  }
-
-  addBox(room, material, w, h, d, x, y, z, collide = false, opts = {}) {
-    const m = this.addMesh(room.group, new THREE.BoxGeometry(w, h, d), material, x, y, z, opts);
-    if (collide) room.colliders.push([x - w / 2, x + w / 2, z - d / 2, z + d / 2]);
-    return m;
-  }
-
-  addFlicker(room, light, amp, speed) {
-    this.flicker.push({ room: room.id, light, base: light.intensity, amp, speed, phase: Math.random() * 10 });
-  }
-
-  createRoom(id, b, wallTex, floorTex, ceilTex, H = 3.4) {
-    const room = { id, group: new THREE.Group(), bounds: b, colliders: [], H };
-    const w = b.maxX - b.minX, d = b.maxZ - b.minZ;
-    const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-
-    const fT = floorTex.clone(); fT.needsUpdate = true; fT.repeat.set(w / 3, d / 3);
-    const floor = this.addMesh(room.group, new THREE.PlaneGeometry(w, d), this.mat(0xffffff, 0.75, 0, { map: fT }), cx, 0, cz, { rx: -Math.PI / 2, cast: false });
-    floor.name = 'floor';
-    const cT = ceilTex.clone(); cT.needsUpdate = true; cT.repeat.set(w / 3, d / 3);
-    this.addMesh(room.group, new THREE.PlaneGeometry(w, d), this.mat(0xffffff, 1, 0, { map: cT }), cx, H, cz, { rx: Math.PI / 2, cast: false });
-
-    const wall = (len, x, z, ry) => {
-      const t = wallTex.clone(); t.needsUpdate = true; t.repeat.set(len / 3, H / 3.4);
-      this.addMesh(room.group, new THREE.PlaneGeometry(len, H), this.mat(0xffffff, 0.95, 0, { map: t }), x, H / 2, z, { ry, cast: false });
-    };
-    wall(w, cx, b.minZ, 0);
-    wall(w, cx, b.maxZ, Math.PI);
-    wall(d, b.minX, cz, Math.PI / 2);
-    wall(d, b.maxX, cz, -Math.PI / 2);
-
-    room.group.visible = false;
-    this.scene.add(room.group);
-    this.rooms[id] = room;
-    return room;
-  }
-
-  // Door set into a wall. side is the wall the door sits on: 'N' z=min, 'S' z=max, 'W' x=min, 'E' x=max
-  addDoor(room, side, pos, locked = false) {
-    const b = room.bounds;
-    const rot = { N: 0, S: Math.PI, W: Math.PI / 2, E: -Math.PI / 2 }[side];
-    const base = {
-      N: [pos, b.minZ], S: [pos, b.maxZ], W: [b.minX, pos], E: [b.maxX, pos]
-    }[side];
-    const g = new THREE.Group();
-    g.position.set(base[0], 0, base[1]);
-    g.rotation.y = rot;
-    const frameMat = this.mat(0x1a110b, 0.7);
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.2, 0.1), this.mat(0xffffff, 0.75, 0, { map: this.texDoor() }));
-    slab.position.set(0, 1.1, 0.05);
-    slab.castShadow = slab.receiveShadow = true;
-    g.add(slab);
-    const post = (x) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.4, 0.2), frameMat);
-      m.position.set(x, 1.2, 0.1); m.castShadow = true; g.add(m);
-    };
-    post(-0.57); post(0.57);
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.16, 0.2), frameMat);
-    lintel.position.set(0, 2.32, 0.1); g.add(lintel);
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), this.mat(0xb08a45, 0.3, 0.9));
-    knob.position.set(0.36, 1.05, 0.13); g.add(knob);
-    if (locked) {
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.04), this.mat(0x222222, 0.4, 0.8));
-      plate.position.set(0.36, 1.05 + 0.0, 0.12);
-    }
-    room.group.add(g);
-  }
-
-  addSconce(room, x, y, z, side) {
-    const g = new THREE.Group();
-    g.position.set(x, y, z);
-    const dir = side === 'W' ? 1 : -1;
-    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.1), this.mat(0x111111, 0.4, 0.8));
-    bracket.position.x = -dir * 0.05;
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 8), new THREE.MeshBasicMaterial({ color: 0xffb060 }));
-    flame.position.set(dir * 0.1, 0.18, 0);
-    g.add(bracket, flame);
-    room.group.add(g);
-    const light = new THREE.PointLight(0xff9040, 1.15, 8, 2);
-    light.position.set(x + dir * 0.35, y + 0.2, z);
-    room.group.add(light);
-    this.addFlicker(room, light, 0.35, 7);
-  }
-
-  addPainting(room, x, y, z, ry, w = 0.7, h = 0.9) {
-    const g = new THREE.Group();
-    g.position.set(x, y, z);
-    g.rotation.y = ry;
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, h + 0.1, 0.06), this.mat(0x2a1c10, 0.5, 0.4));
-    const t = this.makeTexture(128, (c, s) => {
-      const gr = c.createLinearGradient(0, 0, s, s);
-      gr.addColorStop(0, '#1e1a14'); gr.addColorStop(1, '#07060a');
-      c.fillStyle = gr; c.fillRect(0, 0, s, s);
-      c.fillStyle = 'rgba(190,175,150,0.55)';
-      c.beginPath(); c.ellipse(s / 2, s * 0.38, s * 0.14, s * 0.18, 0, 0, Math.PI * 2); c.fill();
-      c.fillStyle = 'rgba(10,8,8,0.9)';
-      c.fillRect(s * 0.4, s * 0.34, s * 0.07, s * 0.05); c.fillRect(s * 0.54, s * 0.34, s * 0.07, s * 0.05);
-      c.fillStyle = 'rgba(60,45,35,0.9)';
-      c.fillRect(s * 0.28, s * 0.58, s * 0.44, s * 0.42);
-      this.speckle(c, s, 300, 0.4);
-    });
-    const canvas = new THREE.Mesh(new THREE.PlaneGeometry(w, h), this.mat(0xffffff, 0.8, 0, { map: t }));
-    canvas.position.z = 0.04;
-    g.add(frame, canvas);
-    room.group.add(g);
-  }
-
-  addPumpkin(room, x, z, ry = 0) {
-    const g = new THREE.Group();
-    g.position.set(x, 0.32, z);
-    g.rotation.y = ry;
-    const body = new THREE.Mesh(
-      new THREE.SphereGeometry(0.34, 18, 14),
-      this.mat(0xc9490a, 0.55, 0, { emissive: 0x4a1a00, emissiveIntensity: 0.9 })
-    );
-    body.scale.set(1.1, 0.88, 1.1);
-    body.castShadow = true;
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.14, 6), this.mat(0x2c3a14, 0.9));
-    stem.position.y = 0.3;
-    const faceTex = this.makeTexture(128, (c, s) => {
-      c.clearRect(0, 0, s, s);
-      c.fillStyle = '#ffc24a';
-      c.beginPath(); c.moveTo(s * 0.2, s * 0.42); c.lineTo(s * 0.42, s * 0.42); c.lineTo(s * 0.31, s * 0.25); c.fill();
-      c.beginPath(); c.moveTo(s * 0.58, s * 0.42); c.lineTo(s * 0.8, s * 0.42); c.lineTo(s * 0.69, s * 0.25); c.fill();
-      c.beginPath(); c.moveTo(s * 0.2, s * 0.6);
-      c.quadraticCurveTo(s * 0.5, s * 0.92, s * 0.8, s * 0.6);
-      c.lineTo(s * 0.7, s * 0.58); c.quadraticCurveTo(s * 0.5, s * 0.78, s * 0.3, s * 0.58); c.fill();
-    });
-    const face = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.5, 0.5),
-      new THREE.MeshBasicMaterial({ map: faceTex, transparent: true, depthWrite: false })
-    );
-    face.position.z = 0.365;
-    g.add(body, stem, face);
-    room.group.add(g);
-    const light = new THREE.PointLight(0xff7a18, 1.6, 7, 2);
-    light.position.set(x, 0.5, z);
-    room.group.add(light);
-    this.addFlicker(room, light, 0.3, 9);
-    room.colliders.push([x - 0.35, x + 0.35, z - 0.35, z + 0.35]);
-  }
-
-  buildImmersiveRooms() {
-    this.rooms = {};
-    this.flicker = [];
-    this.pumpkins = [];
-
-    const wood = this.texWood();
-    const plaster = this.texPlaster();
-    const stone = this.texStone();
-
-    this.buildCorridor(wood, plaster);
-    this.buildParlor(wood, plaster);
-    this.buildBedroom(wood, plaster);
-    this.buildCrypt(stone);
-    this.buildProps();
-  }
-
-  buildCorridor(wood, plaster) {
-    const wall = this.texWall({ base: [95, 10, 17], panel: [24, 30, 11], peel: true });
-    const r = this.createRoom('corridor', { minX: -2, maxX: 2, minZ: -12, maxZ: 12 }, wall, wood, plaster, 3.4);
-    r.fog = [0x070608, 0.06];
-    r.ambient = [0x545a70, 0.42];
-
-    this.addDoor(r, 'W', -3);
-    this.addDoor(r, 'E', -3);
-    this.addDoor(r, 'W', 5);
-    this.addDoor(r, 'E', 6.5);
-
-    // Runner rug
-    const rugTex = this.texRug('#3a1212');
-    rugTex.repeat.set(1, 8);
-    this.addMesh(r.group, new THREE.PlaneGeometry(1.3, 22), this.mat(0xffffff, 1, 0, { map: rugTex }), 0, 0.012, 0, { rx: -Math.PI / 2, cast: false });
-
-    // Ceiling beams
-    const beam = this.mat(0x1c120b, 0.8);
-    for (let z = -10; z <= 10; z += 4) this.addBox(r, beam, 4, 0.22, 0.28, 0, 3.29, z, false, { cast: false });
-
-    // Crypt gate at the north end
-    const stoneMat = this.mat(0x23262a, 0.95);
-    this.addBox(r, stoneMat, 0.35, 2.7, 0.3, -1.0, 1.35, -11.8);
-    this.addBox(r, stoneMat, 0.35, 2.7, 0.3, 1.0, 1.35, -11.8);
-    this.addBox(r, stoneMat, 2.35, 0.4, 0.3, 0, 2.7, -11.8);
-    this.addMesh(r.group, new THREE.PlaneGeometry(1.8, 2.6), new THREE.MeshBasicMaterial({ color: 0x03100a }), 0, 1.3, -11.93, { cast: false });
-    const iron = this.mat(0x15151a, 0.45, 0.85);
-    for (let i = 0; i < 11; i++) {
-      this.addMesh(r.group, new THREE.CylinderGeometry(0.022, 0.022, 2.6, 6), iron, -0.8 + i * 0.16, 1.3, -11.75);
-    }
-    [0.4, 1.3, 2.2].forEach(y => this.addBox(r, iron, 1.75, 0.05, 0.05, 0, y, -11.72));
-
-    // Sealed exit at the south end: heavy double door wrapped in chains
-    this.addDoor(r, 'S', -0.5);
-    this.addDoor(r, 'S', 0.55);
-    const chain = this.mat(0x2a2a2e, 0.4, 0.9);
-    for (let i = 0; i < 16; i++) {
-      const link = this.addMesh(r.group, new THREE.TorusGeometry(0.05, 0.014, 6, 10), chain, -0.9 + i * 0.12, 0.9 + Math.sin(i * 0.8) * 0.06 + i * 0.05, 11.78, { ry: i % 2 ? Math.PI / 2 : 0 });
-      link.castShadow = false;
-    }
-    for (let i = 0; i < 16; i++) {
-      this.addMesh(r.group, new THREE.TorusGeometry(0.05, 0.014, 6, 10), chain, 0.9 - i * 0.12, 0.8 + i * 0.06, 11.76, { ry: i % 2 ? Math.PI / 2 : 0, cast: false });
-    }
-
-    this.addSconce(r, -1.95, 2.0, 8, 'W');
-    this.addSconce(r, 1.95, 2.0, 2, 'E');
-    this.addSconce(r, -1.95, 2.0, -6, 'W');
-    this.addSconce(r, 1.95, 2.0, -9, 'E');
-
-    this.addPainting(r, -1.93, 1.9, 1, Math.PI / 2);
-    this.addPainting(r, 1.93, 1.9, -6, -Math.PI / 2);
-    this.addPainting(r, 1.93, 1.9, 9, -Math.PI / 2, 0.6, 0.8);
-
-    this.addPumpkin(r, 1.45, 9.2, -0.5);
-    this.addPumpkin(r, -1.45, -8.6, 0.4);
-  }
-
-  buildParlor(wood, plaster) {
-    const wall = this.texWall({ base: [350, 38, 15], panel: [22, 35, 10] });
-    const r = this.createRoom('parlor', { minX: -5, maxX: 5, minZ: -6, maxZ: 6 }, wall, wood, plaster, 3.4);
-    r.fog = [0x0a0505, 0.055];
-    r.ambient = [0x7a4a30, 0.5];
-
-    this.addDoor(r, 'S', 0);
-
-    const stoneMat = this.mat(0x2b2623, 0.95);
-    const darkWood = this.mat(0x24160d, 0.6, 0.1);
-    const fabric = this.mat(0x4a1a1a, 0.95);
-
-    // Fireplace
-    this.addBox(r, stoneMat, 0.6, 2.4, 0.6, -1.4, 1.2, -5.7);
-    this.addBox(r, stoneMat, 0.6, 2.4, 0.6, 1.4, 1.2, -5.7);
-    this.addBox(r, stoneMat, 3.4, 0.5, 0.6, 0, 2.15, -5.7);
-    this.addBox(r, darkWood, 3.8, 0.12, 0.8, 0, 2.45, -5.65);
-    this.addMesh(r.group, new THREE.PlaneGeometry(2.2, 1.9), new THREE.MeshBasicMaterial({ color: 0x050302 }), 0, 0.95, -5.93, { cast: false });
-    const logMat = this.mat(0x1a0f08, 0.9, 0, { emissive: 0x551a00, emissiveIntensity: 0.6 });
-    this.addMesh(r.group, new THREE.CylinderGeometry(0.1, 0.1, 1.2, 8), logMat, 0, 0.12, -5.55, { rz: Math.PI / 2 });
-    this.addMesh(r.group, new THREE.CylinderGeometry(0.09, 0.09, 1.0, 8), logMat, 0, 0.3, -5.5, { rz: Math.PI / 2 + 0.3 });
-    this.fireFlames = [];
-    for (let i = 0; i < 4; i++) {
-      const f = new THREE.Mesh(
-        new THREE.ConeGeometry(0.16 - i * 0.02, 0.7 + i * 0.1, 8),
-        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffb347 : 0xff6a1a, transparent: true, opacity: 0.85, depthWrite: false })
-      );
-      f.position.set(-0.35 + i * 0.24, 0.5, -5.55);
-      r.group.add(f);
-      this.fireFlames.push(f);
-    }
-    const fire = new THREE.PointLight(0xff6a1a, 3.2, 14, 2);
-    fire.position.set(0, 0.9, -4.9);
-    fire.castShadow = false;
-    r.group.add(fire);
-    this.addFlicker(r, fire, 0.35, 11);
-
-    const emberPos = new Float32Array(60 * 3);
-    for (let i = 0; i < emberPos.length; i += 3) {
-      emberPos[i] = (Math.random() - 0.5) * 1.2;
-      emberPos[i + 1] = Math.random() * 1.6;
-      emberPos[i + 2] = -5.5 + (Math.random() - 0.5) * 0.3;
-    }
-    const emberGeo = new THREE.BufferGeometry();
-    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
-    this.fireEmbers = new THREE.Points(emberGeo, new THREE.PointsMaterial({ color: 0xffa040, size: 0.04, transparent: true, opacity: 0.9, depthWrite: false }));
-    this.fireEmbers.frustumCulled = false;
-    r.group.add(this.fireEmbers);
-
-    // Rug and seating
-    const rug = this.texRug('#4a1a1a');
-    this.addMesh(r.group, new THREE.PlaneGeometry(4.4, 3.2), this.mat(0xffffff, 1, 0, { map: rug }), 0, 0.012, -1.6, { rx: -Math.PI / 2, cast: false });
-    this.addBox(r, fabric, 2.2, 0.45, 0.9, 0, 0.3, 0.3, true);
-    this.addBox(r, fabric, 2.2, 0.75, 0.22, 0, 0.62, 0.82);
-    this.addBox(r, fabric, 0.22, 0.6, 0.9, -1.1, 0.45, 0.3);
-    this.addBox(r, fabric, 0.22, 0.6, 0.9, 1.1, 0.45, 0.3);
-    this.addBox(r, darkWood, 1.1, 0.06, 0.6, 0, 0.45, -1.7, true);
-    this.addBox(r, darkWood, 0.08, 0.42, 0.08, -0.5, 0.21, -1.5);
-    this.addBox(r, darkWood, 0.08, 0.42, 0.08, 0.5, 0.21, -1.5);
-    this.addBox(r, fabric, 0.9, 0.5, 0.9, -2.6, 0.28, -2.2, true, { ry: 0.5 });
-    this.addBox(r, fabric, 0.9, 0.5, 0.9, 2.6, 0.28, -2.2, true, { ry: -0.5 });
-
-    // Bookcase along the west wall
-    this.addBox(r, darkWood, 0.5, 2.6, 3.2, -4.72, 1.3, -1.8, true);
-    const bookColors = [0x5a1a1a, 0x1d2f45, 0x2f4a2a, 0x4a3a1a, 0x2a1a3a, 0x3a1a1a];
-    for (let shelf = 0; shelf < 4; shelf++) {
-      let z = -3.25;
-      while (z < -0.4) {
-        const bw = 0.06 + Math.random() * 0.06, bh = 0.3 + Math.random() * 0.22;
-        const book = this.mat(bookColors[Math.floor(Math.random() * bookColors.length)], 0.85);
-        const m = this.addMesh(r.group, new THREE.BoxGeometry(0.28, bh, bw), book, -4.55, 0.35 + shelf * 0.62 + bh / 2, z + bw / 2, { cast: false });
-        m.rotation.z = Math.random() < 0.06 ? 0.25 : 0;
-        z += bw + 0.012;
-      }
-    }
-
-    // Grandfather clock
-    this.addBox(r, darkWood, 0.6, 2.3, 0.45, -4.5, 1.15, 3.6, true);
-    this.addMesh(r.group, new THREE.CircleGeometry(0.2, 20), new THREE.MeshBasicMaterial({ color: 0xcfc6a0 }), -4.5 + 0.26, 1.9, 3.6, { ry: Math.PI / 2, cast: false });
-
-    this.addPainting(r, 4.93, 1.9, -1, -Math.PI / 2, 0.9, 1.2);
-    this.addPainting(r, -2.8, 2.0, -5.94, 0, 0.6, 0.8);
-    this.addPumpkin(r, 3.9, -4.8, -0.4);
-  }
-
-  buildBedroom(wood, plaster) {
-    const wall = this.texWall({ base: [212, 16, 18], panel: [26, 22, 12], peel: true });
-    const r = this.createRoom('bedroom', { minX: -5, maxX: 5, minZ: -6, maxZ: 6 }, wall, wood, plaster, 3.4);
-    r.fog = [0x05070b, 0.06];
-    r.ambient = [0x4a5f88, 0.55];
-
-    this.addDoor(r, 'S', 0);
-
-    const darkWood = this.mat(0x1e140d, 0.6, 0.1);
-    const linen = this.mat(0x8d8f98, 0.95);
-
-    // Moonlit window
-    const frameMat = this.mat(0x120d09, 0.6);
-    this.addBox(r, frameMat, 1.7, 0.1, 0.12, 0, 2.8, -5.92, false, { cast: false });
-    this.addBox(r, frameMat, 1.7, 0.1, 0.12, 0, 1.0, -5.92, false, { cast: false });
-    this.addBox(r, frameMat, 0.1, 1.9, 0.12, -0.8, 1.9, -5.92, false, { cast: false });
-    this.addBox(r, frameMat, 0.1, 1.9, 0.12, 0.8, 1.9, -5.92, false, { cast: false });
-    this.addBox(r, frameMat, 0.06, 1.8, 0.1, 0, 1.9, -5.92, false, { cast: false });
-    this.addBox(r, frameMat, 1.6, 0.06, 0.1, 0, 1.9, -5.92, false, { cast: false });
-    this.addMesh(r.group, new THREE.PlaneGeometry(1.6, 1.8), new THREE.MeshBasicMaterial({ color: 0x5c7cb8 }), 0, 1.9, -5.97, { cast: false });
-    const moon = new THREE.SpotLight(0x8ea8e8, 3.4, 16, 0.75, 0.8, 1.2);
-    moon.position.set(0, 2.4, -6);
-    moon.target.position.set(0.5, 0, -1.5);
-    r.group.add(moon, moon.target);
-
-    // Bed
-    this.addBox(r, darkWood, 1.8, 0.35, 2.3, -3.2, 0.3, -4.0, true);
-    this.addBox(r, linen, 1.7, 0.22, 2.1, -3.2, 0.58, -3.95);
-    this.addBox(r, this.mat(0x2a2f40, 0.95), 1.72, 0.1, 1.3, -3.2, 0.72, -3.55);
-    this.addBox(r, linen, 0.8, 0.14, 0.4, -3.2, 0.74, -4.8);
-    this.addBox(r, darkWood, 1.9, 1.3, 0.12, -3.2, 0.85, -5.1);
-
-    // Vanity with the key on top
-    this.addBox(r, darkWood, 0.8, 1.0, 1.6, 4.1, 0.5, -4.5, true);
-    this.addBox(r, this.mat(0x0c0c10, 0.12, 1), 0.04, 1.0, 0.8, 4.97, 1.75, -4.5, false, { cast: false });
-    this.addBox(r, darkWood, 0.4, 0.42, 0.4, 3.0, 0.21, -4.3, true);
-
-    // Wardrobe
-    this.addBox(r, darkWood, 0.8, 2.5, 1.7, 4.55, 1.25, 1.4, true);
-    this.addBox(r, this.mat(0xb08a45, 0.3, 0.9), 0.04, 0.2, 0.04, 4.12, 1.1, 1.1);
-    this.addBox(r, this.mat(0xb08a45, 0.3, 0.9), 0.04, 0.2, 0.04, 4.12, 1.1, 1.7);
-
-    // Nightstand with a candle
-    this.addBox(r, darkWood, 0.55, 0.6, 0.55, -1.5, 0.3, -5.6, true);
-    this.addMesh(r.group, new THREE.CylinderGeometry(0.04, 0.04, 0.18, 8), this.mat(0xe8dfc8, 0.7), -1.5, 0.69, -5.6);
-    this.addMesh(r.group, new THREE.ConeGeometry(0.02, 0.07, 6), new THREE.MeshBasicMaterial({ color: 0xffd080 }), -1.5, 0.82, -5.6, { cast: false });
-    const candle = new THREE.PointLight(0xffa850, 1.2, 7, 2);
-    candle.position.set(-1.5, 0.95, -5.4);
-    r.group.add(candle);
-    this.addFlicker(r, candle, 0.4, 8);
-
-    const rug = this.texRug('#2a2f40');
-    this.addMesh(r.group, new THREE.PlaneGeometry(3.4, 2.4), this.mat(0xffffff, 1, 0, { map: rug }), -0.6, 0.012, -1.0, { rx: -Math.PI / 2, cast: false });
-    this.addPainting(r, -4.93, 1.9, 0.5, Math.PI / 2, 0.8, 1.0);
-  }
-
-  buildCrypt(stone) {
-    const r = this.createRoom('crypt', { minX: -5, maxX: 5, minZ: -8, maxZ: 6 }, stone, stone, stone, 3.8);
-    r.fog = [0x040c07, 0.085];
-    r.ambient = [0x2c5a40, 0.5];
-
-    this.addDoor(r, 'S', 0);
-
-    const stoneMat = this.mat(0x32363a, 0.95);
-
-    // Altar on a stepped base
-    this.addBox(r, stoneMat, 2.8, 0.2, 1.6, 0, 0.1, -5.6, true);
-    this.addBox(r, stoneMat, 2.0, 0.8, 1.0, 0, 0.6, -5.6);
-    this.addBox(r, this.mat(0x3d4044, 0.9), 2.2, 0.12, 1.2, 0, 1.06, -5.6);
-
-    // Pillars
-    [[-3, -1], [3, -1], [-3, -4.5], [3, -4.5]].forEach(([x, z]) => {
-      this.addMesh(r.group, new THREE.CylinderGeometry(0.34, 0.4, 3.8, 10), stoneMat, x, 1.9, z);
-      this.addBox(r, stoneMat, 0.9, 0.2, 0.9, x, 0.1, z, true);
-      this.addBox(r, stoneMat, 0.9, 0.2, 0.9, x, 3.7, z, false, { cast: false });
-    });
-
-    // Sarcophagi
-    this.addBox(r, stoneMat, 1.1, 0.7, 2.4, -3.7, 0.35, 2.6, true);
-    this.addBox(r, this.mat(0x3a3e42, 0.9), 1.2, 0.16, 2.5, -3.7, 0.78, 2.6, false, { ry: 0.04 });
-    this.addBox(r, stoneMat, 1.1, 0.7, 2.4, 3.7, 0.35, 2.4, true);
-    this.addBox(r, this.mat(0x3a3e42, 0.9), 1.2, 0.18, 2.5, 3.7, 0.79, 2.4, false, { ry: -0.12 });
-
-    // Ground light and torches
-    const green = new THREE.PointLight(0x2bff7a, 1.3, 9, 2);
-    green.position.set(0, 0.5, -2);
-    r.group.add(green);
-    this.addFlicker(r, green, 0.2, 3);
-    this.addSconce(r, -4.9, 2.2, -2.5, 'W');
-    this.addSconce(r, 4.9, 2.2, 0.5, 'E');
-
-    const smokePos = new Float32Array(90 * 3);
-    for (let i = 0; i < smokePos.length; i += 3) {
-      smokePos[i] = (Math.random() - 0.5) * 8;
-      smokePos[i + 1] = Math.random() * 1.6;
-      smokePos[i + 2] = -2 + (Math.random() - 0.5) * 9;
-    }
-    const smokeGeo = new THREE.BufferGeometry();
-    smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
-    this.greenSmoke = new THREE.Points(smokeGeo, new THREE.PointsMaterial({ color: 0x5dff9a, size: 0.09, transparent: true, opacity: 0.35, depthWrite: false }));
-    this.greenSmoke.frustumCulled = false;
-    r.group.add(this.greenSmoke);
-  }
-
-  buildProps() {
-    // Silver key, resting on the bedroom vanity
-    const keyGroup = new THREE.Group();
-    const silver = this.mat(0xdfe6ee, 0.25, 0.95, { emissive: 0x6fa6d8, emissiveIntensity: 0.55 });
-    const keyHead = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.028, 8, 18), silver);
-    keyHead.position.y = 0.12;
-    const keyStem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8), silver);
-    keyStem.position.y = -0.1;
-    const t1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.035, 0.03), silver); t1.position.set(0.05, -0.2, 0);
-    const t2 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.035, 0.03), silver); t2.position.set(0.04, -0.12, 0);
-    keyGroup.add(keyHead, keyStem, t1, t2);
-    keyGroup.position.set(4.1, 1.32, -4.5);
-    this.silverKeyMesh = keyGroup;
-    this.silverKeyMesh.visible = false;
-    this.rooms.bedroom.group.add(this.silverKeyMesh);
-
-    this.keyLight = new THREE.PointLight(0x8ec8ff, 1.4, 4, 2);
-    this.keyLight.position.set(4.0, 1.5, -4.5);
-    this.keyLight.visible = false;
-    this.rooms.bedroom.group.add(this.keyLight);
-
-    // Horned skull relic on the crypt altar
-    const skullGroup = new THREE.Group();
-    const bone = this.mat(0xd8d4b0, 0.55, 0, { emissive: 0x1a6a2a, emissiveIntensity: 0.55 });
-    const skullHead = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 14), bone);
-    skullHead.scale.set(1, 1.05, 1.1);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), bone);
-    jaw.position.set(0, -0.22, 0.03);
-    const hornMat = this.mat(0x15110b, 0.6, 0, { emissive: 0x0b2a12 });
-    const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.38, 8), hornMat);
-    hornL.position.set(-0.2, 0.22, 0); hornL.rotation.z = 0.7;
-    const hornR = hornL.clone();
-    hornR.position.set(0.2, 0.22, 0); hornR.rotation.z = -0.7;
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x39ff7a });
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), eyeMat);
-    eyeL.position.set(-0.08, 0.02, 0.2);
-    const eyeR = eyeL.clone();
-    eyeR.position.x = 0.08;
-    skullGroup.add(skullHead, jaw, hornL, hornR, eyeL, eyeR);
-    skullGroup.position.set(0, 1.4, -5.6);
-    this.relicMesh = skullGroup;
-    this.relicMesh.visible = false;
-    this.rooms.crypt.group.add(this.relicMesh);
-
-    this.relicLight = new THREE.PointLight(0x39ff7a, 3.0, 9, 2);
-    this.relicLight.position.set(0, 1.9, -5.0);
-    this.relicLight.visible = false;
-    this.rooms.crypt.group.add(this.relicLight);
-  }
-
-  // ------------------------------------------------------------------------
-  // 3b. Room Switching & Doorway Management
-  // ------------------------------------------------------------------------
-  switchRoom(roomId, playSound = true) {
-    if (playSound) this.playProceduralSound('door');
-
-    const from = this.currentRoom;
-    this.currentRoom = roomId;
-    const room = this.rooms[roomId];
-    this.activeRoom = room;
-
-    Object.keys(this.rooms).forEach(id => { this.rooms[id].group.visible = (id === roomId); });
-
-    // Place the player at the matching doorway and face into the room
-    let spawn = { x: 0, z: 4.3, yaw: 0 };
-    if (roomId === 'corridor') {
-      if (from === 'parlor') spawn = { x: -0.9, z: -3, yaw: -Math.PI / 2 };
-      else if (from === 'bedroom') spawn = { x: 0.9, z: -3, yaw: Math.PI / 2 };
-      else if (from === 'crypt') spawn = { x: 0, z: -9.4, yaw: Math.PI };
-      else spawn = { x: 0, z: 9, yaw: 0 };
-    }
-    this.camera.position.set(spawn.x, this.camHeight || this.playerHeight, spawn.z);
-    this.euler.set(0, spawn.yaw, 0);
-    this.camera.quaternion.setFromEuler(this.euler);
-
-    // Atmosphere
-    this.scene.fog.color.setHex(room.fog[0]);
-    this.scene.fog.density = room.fog[1];
-    this.ambientLight.color.setHex(room.ambient[0]);
-    this.ambientLight.intensity = room.ambient[1];
-
-    const hasKey = this.hasKey, hasRelic = this.hasRelic;
-    const isBedroom = roomId === 'bedroom', isCrypt = roomId === 'crypt';
-    this.silverKeyMesh.visible = isBedroom && !hasKey;
-    this.keyLight.visible = isBedroom && !hasKey;
-    this.relicMesh.visible = isCrypt && !hasRelic;
-    this.relicLight.visible = isCrypt && !hasRelic;
-
-    const obj = document.getElementById('obj-text');
-    if (isBedroom) {
-      obj.textContent = hasKey ? 'Return to the corridor and unlock the crypt' : 'Find the silver key on the vanity';
-    } else if (roomId === 'parlor') {
-      obj.textContent = 'Parlor. The fire is warm, keep listening';
-    } else if (isCrypt) {
-      obj.textContent = hasRelic ? 'Alarm raised. Get back to the front gate' : 'Take the horned skull from the altar';
-    } else {
-      obj.textContent = hasRelic ? 'Run to the front gate' : (hasKey ? 'Unlock the crypt gate at the end of the hall' : 'Find the silver key. Parlor on the left, bedroom on the right');
-    }
-
-    // A hunting entity follows you through the door
-    if (this.entity && this.entityState === 'HUNT') {
-      this.entityRoom = roomId;
-      this.placeEntityAway();
-    } else if (this.entity) {
-      this.entity.visible = false;
-    }
-
-    this.setupRoomDoorways(roomId);
-  }
-
-  setupRoomDoorways(roomId) {
-    this.interactiveObjects = [];
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
-
-    if (roomId === 'corridor') {
-      this.interactiveObjects.push({
-        name: 'door_parlor', pos: V(-2, 1.2, -3), prompt: 'Enter parlor',
-        action: () => this.switchRoom('parlor')
-      });
-      this.interactiveObjects.push({
-        name: 'door_bedroom', pos: V(2, 1.2, -3), prompt: 'Enter bedroom',
-        action: () => this.switchRoom('bedroom')
-      });
-      this.interactiveObjects.push({
-        name: 'door_crypt', pos: V(0, 1.2, -11.8),
-        prompt: this.cryptUnlocked ? 'Enter crypt' : 'Unlock crypt gate (needs silver key)',
-        action: () => {
-          if (this.cryptUnlocked) {
-            this.switchRoom('crypt');
-          } else if (this.hasKey) {
-            this.cryptUnlocked = true;
-            this.playProceduralSound('door');
-            this.switchRoom('crypt');
-          } else {
-            document.getElementById('obj-text').textContent = 'Gate locked. The silver key is in the bedroom';
-          }
-        }
-      });
-      this.interactiveObjects.push({
-        name: 'exit_gate', pos: V(0, 1.2, 11.8),
-        prompt: this.hasRelic ? 'Escape the manor' : 'Sealed (needs the skull)',
-        action: () => {
-          if (this.hasRelic) {
-            this.triggerVictory();
-          } else {
-            document.getElementById('obj-text').textContent = 'The exit is sealed. Bring the skull from the crypt first';
-          }
-        }
-      });
-    } else {
-      this.interactiveObjects.push({
-        name: 'door_corridor', pos: V(0, 1.2, 5.9), prompt: 'Back to corridor',
-        action: () => this.switchRoom('corridor')
-      });
-
-      if (roomId === 'bedroom' && !this.hasKey) {
-        this.interactiveObjects.push({
-          name: 'silver_key', pos: V(4.1, 1.3, -4.5), prompt: 'Take silver key',
-          action: () => {
-            this.hasKey = true;
-            this.silverKeyMesh.visible = false;
-            this.keyLight.visible = false;
-            this.playProceduralSound('pickup');
-            document.getElementById('obj-text').textContent = 'Silver key taken. Return to the corridor to unlock the crypt';
-          }
-        });
-      }
-
-      if (roomId === 'crypt' && !this.hasRelic) {
-        this.interactiveObjects.push({
-          name: 'cursed_relic', pos: V(0, 1.4, -5.6), prompt: 'Take horned skull (starts the alarm)',
-          action: () => {
-            this.hasRelic = true;
-            this.relicMesh.visible = false;
-            this.relicLight.visible = false;
-            this.playProceduralSound('relic');
-            document.getElementById('obj-text').textContent = 'Alarm raised. Run to the front door';
-            this.alertEntity(this.camera.position, 'hunt');
-          }
-        });
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------------
-  // 4. Stalking Entity AI
-  // ------------------------------------------------------------------------
-  initEntity() {
-    this.entity = new THREE.Group();
-    const black = new THREE.MeshStandardMaterial({ color: 0x050405, roughness: 1, metalness: 0 });
-
-    // Tall, thin, too-long limbs
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 1.5, 8), black);
-    torso.position.y = 1.35;
-    const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.07, 0.9, 6), black);
-    legs.position.y = 0.45;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), black);
-    head.scale.set(0.85, 1.25, 0.9);
-    head.position.y = 2.28;
-    const armGeo = new THREE.CylinderGeometry(0.035, 0.025, 1.6, 6);
-    const armL = new THREE.Mesh(armGeo, black);
-    armL.position.set(-0.3, 1.25, 0.05);
-    armL.rotation.z = 0.12;
-    const armR = armL.clone();
-    armR.position.x = 0.3;
-    armR.rotation.z = -0.12;
-
-    this.entityEyeMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-    const eyeGeo = new THREE.SphereGeometry(0.03, 8, 8);
-    const eyeL = new THREE.Mesh(eyeGeo, this.entityEyeMat);
-    eyeL.position.set(-0.07, 2.3, 0.14);
-    const eyeR = eyeL.clone();
-    eyeR.position.x = 0.07;
-
-    this.entityGlow = new THREE.PointLight(0xff5500, 0.8, 4, 2);
-    this.entityGlow.position.set(0, 2.2, 0.4);
-
-    [torso, legs, head, armL, armR].forEach(m => { m.castShadow = true; });
-    this.entity.add(torso, legs, head, armL, armR, eyeL, eyeR, this.entityGlow);
-    this.entity.visible = false;
-    this.scene.add(this.entity);
-
-    this.investigateTimer = 0;
-    this.entityStunCooldown = 0;
-  }
-
-  // Put the entity at the spot in the current room that is farthest from the player
-  placeEntityAway() {
-    const room = this.rooms[this.currentRoom];
-    const b = room.bounds, m = 0.9;
-    const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-    const spots = [
-      [b.minX + m, b.minZ + m], [b.maxX - m, b.minZ + m],
-      [b.minX + m, b.maxZ - m], [b.maxX - m, b.maxZ - m],
-      [cx, b.minZ + m], [cx, b.maxZ - m]
-    ];
-    const p = this.camera.position;
-    let best = spots[0], bestD = -1;
-    spots.forEach(s => {
-      const d = Math.hypot(s[0] - p.x, s[1] - p.z);
-      if (d > bestD) { bestD = d; best = s; }
-    });
-    this.entity.position.set(best[0], 0, best[1]);
-    this.entity.visible = true;
-  }
-
-  moveEntityToward(speed, delta) {
-    const p = this.camera.position, e = this.entity.position;
-    const dx = p.x - e.x, dz = p.z - e.z;
-    const len = Math.hypot(dx, dz) || 1;
-    const b = this.rooms[this.currentRoom].bounds;
-    e.x = Math.max(b.minX + 0.4, Math.min(b.maxX - 0.4, e.x + (dx / len) * speed * 1));
-    e.z = Math.max(b.minZ + 0.4, Math.min(b.maxZ - 0.4, e.z + (dz / len) * speed * 1));
-    this.entity.rotation.y = Math.atan2(dx, dz);
-    this.entityDistance = Math.hypot(p.x - e.x, p.z - e.z);
-  }
-
-  updateEntity(delta) {
-    if (!this.entity || this.isDead || this.hasWon) return;
-
-    if (this.entityStunCooldown > 0) this.entityStunCooldown -= delta;
-
-    const active = this.entityState === 'HUNT' || this.entityState === 'INVESTIGATE';
-    if (!active) {
-      this.entity.visible = false;
-      return;
-    }
-
-    this.entity.visible = (this.entityRoom === this.currentRoom);
-
-    // Investigation fades out if you stay quiet
-    if (this.entityState === 'INVESTIGATE') {
-      this.investigateTimer -= delta;
-      if (this.investigateTimer <= 0) {
-        this.entityState = 'PATROL';
-        this.entity.visible = false;
-        document.getElementById('threat-alert').style.display = 'none';
-        return;
-      }
-    }
-
-    const hunting = this.entityState === 'HUNT';
-    this.entityEyeMat.color.setHex(hunting ? 0xff1a1a : 0xff8a00);
-    this.entityGlow.color.setHex(hunting ? 0xff1a1a : 0xff7700);
-
-    // Flashlight stun: a short stagger and a shove back, then it needs time to recover
-    if (this.isFlashlightOn && this.entity.visible && this.entityStunTimer <= 0 && this.entityStunCooldown <= 0) {
-      const camDir = new THREE.Vector3();
-      this.camera.getWorldDirection(camDir);
-      const toEntity = this.entity.position.clone().add(new THREE.Vector3(0, 1.4, 0)).sub(this.camera.position).normalize();
-      if (camDir.dot(toEntity) > 0.93 && this.entityDistance < 9) {
-        this.entityStunTimer = 1.6;
-        this.entityStunCooldown = 6;
-        const away = this.entity.position.clone().sub(this.camera.position).setY(0).normalize().multiplyScalar(2.5);
-        const b = this.rooms[this.currentRoom].bounds;
-        this.entity.position.x = Math.max(b.minX + 0.4, Math.min(b.maxX - 0.4, this.entity.position.x + away.x));
-        this.entity.position.z = Math.max(b.minZ + 0.4, Math.min(b.maxZ - 0.4, this.entity.position.z + away.z));
-        this.playProceduralSound('stun');
-      }
-    }
-
-    if (this.entityStunTimer > 0) {
-      this.entityStunTimer -= delta;
-      this.entity.position.y = 0;
-      this.entity.rotation.z = Math.sin(performance.now() * 0.06) * 0.08;
-      return;
-    }
-    this.entity.rotation.z = Math.sin(performance.now() * 0.004) * 0.03;
-
-    if (!this.entity.visible) return;
-    this.moveEntityToward((hunting ? this.entityHuntSpeed : this.entitySpeed) * delta, delta);
-
-    if (this.entityDistance < 1.0) {
-      this.triggerDeath();
-    }
-  }
-
-  alertEntity(soundOrigin, severity = 'investigate') {
-    if (this.isDead || this.hasWon) return;
-
-    const alertBanner = document.getElementById('threat-alert');
-
-    if (severity === 'hunt' || this.hasRelic) {
-      if (this.entityState === 'HUNT') return;
-      this.entityState = 'HUNT';
-      this.entityRoom = this.currentRoom;
-      this.placeEntityAway();
-      alertBanner.textContent = 'It heard you and is coming';
-      alertBanner.style.display = 'block';
-      this.playProceduralSound('roar');
-    } else if (this.entityState === 'PATROL') {
-      this.entityState = 'INVESTIGATE';
-      this.entityRoom = this.currentRoom;
-      this.investigateTimer = 8;
-      this.placeEntityAway();
-      alertBanner.textContent = 'It heard something and is investigating';
-      alertBanner.style.display = 'block';
-      this.playProceduralSound('growl');
-    } else if (this.entityState === 'INVESTIGATE') {
-      this.investigateTimer = Math.max(this.investigateTimer, 4);
-    }
-  }
-
-  // ------------------------------------------------------------------------
-  // 5. Player Controls, Walking & Interaction
+  // Input
   // ------------------------------------------------------------------------
   setupEvents() {
     this.container.addEventListener('click', () => {
-      if (!this.isLocked && this.isPlaying && !this.isDead && !this.hasWon) {
-        this.container.requestPointerLock();
+      if (!this.isLocked && this.isPlaying && !this.isDead && !this.hasWon && !this.hud.noteOpen) this.container.requestPointerLock();
+    });
+    document.addEventListener('pointerlockchange', () => { this.isLocked = document.pointerLockElement === this.container; });
+    document.addEventListener('mousemove', e => {
+      if (!(this.isLocked || this.testMode) || this.look || this.inputLocked) return;
+      this.euler.y -= (e.movementX || 0) * 0.0024;
+      this.euler.x = clamp(this.euler.x - (e.movementY || 0) * 0.0024, -1.35, 1.35);
+      const h = this.hiding;
+      if (h.active) {
+        this.euler.y = h.baseYaw + clamp(angleDiff(h.baseYaw, this.euler.y), -h.arc.yaw, h.arc.yaw);
+        this.euler.x = clamp(this.euler.x, -h.arc.pitch, h.arc.pitch);
       }
     });
-
-    document.addEventListener('pointerlockchange', () => {
-      this.isLocked = (document.pointerLockElement === this.container);
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!this.isLocked) return;
-
-      const movementX = e.movementX || 0;
-      const movementY = e.movementY || 0;
-
-      this.euler.y -= movementX * 0.0024;
-      this.euler.x -= movementY * 0.0024;
-      this.euler.x = Math.max(this.minPolarAngle, Math.min(this.maxPolarAngle, this.euler.x));
-
-      this.camera.quaternion.setFromEuler(this.euler);
-    });
-
-    window.addEventListener('keydown', (e) => {
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Backquote') { this.debug && this.debug.toggle(); return; }
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+      if (e.code === 'Space') e.preventDefault();
+      if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat && this.isPlaying) this.hud.toggleInventory(); return; }
       this.keys[e.code] = true;
-
-      // Toggle Crouch (C or Control)
-      if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !e.repeat) {
-        this.isCrouching = !this.isCrouching;
-        document.getElementById('stance-indicator').textContent = this.isCrouching ? 'Crouching' : 'Standing';
+      if (e.repeat) return;
+      if (this.hud.noteOpen && (e.code === 'KeyE' || e.code === 'Escape' || e.code === 'Space')) { this.hud.closeNote(); return; }
+      if (!this.isPlaying || this.isDead || this.hasWon) return;
+      if (e.code === 'KeyI') this.hud.toggleInventory();
+      if (e.code === 'KeyE') this.pressInteract();
+      if (e.code === 'KeyR') this.useSelected();
+      if (e.code === 'KeyQ') this.dropSelected(e.shiftKey);
+      if (/^Digit[1-6]$/.test(e.code)) this.inventory.select(Number(e.code.slice(5)) - 1);
+      if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.hiding.active && !this.inputLocked) {
+        this.isCrouching = !this.isCrouching; document.getElementById('stance-indicator').textContent = this.isCrouching ? 'Crouching' : 'Standing';
       }
-
-      // Toggle Flashlight (F)
-      if (e.code === 'KeyF') {
-        this.isFlashlightOn = !this.isFlashlightOn;
-        this.flashlight.intensity = this.isFlashlightOn ? this.flashlightBase : 0;
-        if (this.playerFillLight) this.playerFillLight.intensity = this.isFlashlightOn ? this.fillOn : this.fillOff;
-        this.playProceduralSound('click');
-      }
-
-      // Interact (E)
-      if (e.code === 'KeyE' && !e.repeat) {
-        this.triggerCurrentInteraction();
+      if (e.code === 'KeyF' && !this.hiding.active) {
+        this.flashlightOn = !this.flashlightOn; this.audio.click();
       }
     });
-
-    window.addEventListener('keyup', (e) => {
+    window.addEventListener('keyup', e => {
       this.keys[e.code] = false;
+      if (e.code === 'KeyE') this.interact.release();
     });
-
-    window.addEventListener('mousedown', (e) => {
-      if (this.isLocked && e.button === 0) {
-        this.triggerCurrentInteraction();
-      }
+    window.addEventListener('mousedown', e => {
+      if (!this.isLocked) return;
+      if (e.button === 0) this.pressInteract(); else if (e.button === 2) this.useSelected();
     });
-
-    window.addEventListener('resize', () => {
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    window.addEventListener('mouseup', e => { if (e.button === 0) this.interact.release(); });
+    window.addEventListener('contextmenu', e => e.preventDefault());
+    window.addEventListener('resize', () => { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(innerWidth, innerHeight); });
+    window.addEventListener('blur', () => { this.keys = {}; });
   }
 
-  updateMovement(delta) {
-    if (!this.isLocked || this.isDead || this.hasWon) return;
+  pressInteract() {
+    if (this.hiding.active) { if (!this.interact.focus) this.hiding.leave(); else this.interact.press(); return; }
+    this.interact.press();
+  }
 
-    this.isSprinting = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']) && !this.isCrouching;
+  // ------------------------------------------------------------------------
+  // Movement (sliding collision against furniture, walls and open doors)
+  // ------------------------------------------------------------------------
+  canStandAt(x, z) { return !this.room.blocked(x, z, CONFIG.player.radius); }
 
-    let targetSpeed = 3.6;
-    if (this.isCrouching) targetSpeed = 1.8;
-    else if (this.isSprinting) targetSpeed = 6.2;
-
-    const moveZ = Number(!!this.keys['KeyW'] || !!this.keys['ArrowUp']) - Number(!!this.keys['KeyS'] || !!this.keys['ArrowDown']);
-    const moveX = Number(!!this.keys['KeyD'] || !!this.keys['ArrowRight']) - Number(!!this.keys['KeyA'] || !!this.keys['ArrowLeft']);
-
-    // Camera height adjustment for crouching
-    const targetHeight = this.isCrouching ? this.crouchHeight : this.playerHeight;
-    this.camHeight += (targetHeight - this.camHeight) * Math.min(1, 10 * delta);
+  updateMovement(dt) {
+    if (!this.canAct() || this.hiding.active) return;
+    const k = this.keys, P = CONFIG.player;
+    this.isSprinting = !!(k.ShiftLeft || k.ShiftRight) && !this.isCrouching;
+    const speed = this.isCrouching ? P.crouch : this.isSprinting ? P.sprint : P.walk;
+    const mz = Number(!!(k.KeyW || k.ArrowUp)) - Number(!!(k.KeyS || k.ArrowDown)), mx = Number(!!(k.KeyD || k.ArrowRight)) - Number(!!(k.KeyA || k.ArrowLeft));
+    const target = this.isCrouching ? P.crouchEye : P.eye;
+    this.camHeight = damp(this.camHeight, target, 10, dt);
+    const fwd = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion); fwd.y = 0; fwd.normalize();
+    const right = TMP.v2.set(1, 0, 0).applyQuaternion(this.camera.quaternion); right.y = 0; right.normalize();
+    const mv = TMP.v3.set(0, 0, 0); if (mz) mv.addScaledVector(fwd, mz); if (mx) mv.addScaledVector(right, mx);
     let moving = false;
-
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    forward.y = 0;
-    forward.normalize();
-
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    right.y = 0;
-    right.normalize();
-
-    const moveVector = new THREE.Vector3();
-    if (moveZ !== 0) moveVector.addScaledVector(forward, moveZ);
-    if (moveX !== 0) moveVector.addScaledVector(right, moveX);
-
-    if (moveVector.lengthSq() > 0) {
-      moveVector.normalize().multiplyScalar(targetSpeed * delta);
-      
-      // Slide along walls and furniture by testing each axis on its own
-      const nx = this.camera.position.x + moveVector.x;
-      const nz = this.camera.position.z + moveVector.z;
-      if (this.canStandAt(nx, this.camera.position.z)) this.camera.position.x = nx;
-      if (this.canStandAt(this.camera.position.x, nz)) this.camera.position.z = nz;
+    if (mv.lengthSq() > 0) {
+      mv.normalize().multiplyScalar(speed * dt);
+      const p = this.camera.position, nx = p.x + mv.x, nz = p.z + mv.z;
+      if (this.canStandAt(nx, p.z)) p.x = nx;
+      if (this.canStandAt(p.x, nz)) p.z = nz;
       moving = true;
-
-      this.headBobTimer += delta * (this.isSprinting ? 12 : (this.isCrouching ? 6 : 8));
-
-      // Footstep Sounds
-      const interval = this.isSprinting ? 320 : (this.isCrouching ? 680 : 480);
-      const now = performance.now();
-      if (now - this.lastFootstepTime > interval) {
-        this.lastFootstepTime = now;
-        if (!this.isCrouching) {
-          this.playProceduralSound('footstep');
-          if (this.isSprinting) {
-            this.alertEntity(this.camera.position, 'investigate');
-          }
-        }
+      this.headBob += dt * (this.isSprinting ? 12 : this.isCrouching ? 6 : 8);
+      const now = performance.now(), interval = this.isSprinting ? 320 : this.isCrouching ? 700 : 480;
+      if (now - this.lastStep > interval) {
+        this.lastStep = now;
+        const loud = this.isCrouching ? 0 : (this.isSprinting ? CONFIG.loudness.sprint : CONFIG.loudness.walk);
+        this.audio.footstep(this.room.def.floor, this.isCrouching ? 0.35 : 1);
+        if (loud > 0) this.makeNoise(p.x, p.z, this.currentRoom, loud, 'step');
       }
     }
-
-    // Head bob eases in and out instead of snapping
-    const bobTarget = moving ? (this.isSprinting ? 0.06 : (this.isCrouching ? 0.012 : 0.03)) : 0;
-    this.bobAmp += (bobTarget - this.bobAmp) * Math.min(1, 8 * delta);
-    this.camera.position.y = this.camHeight + Math.sin(this.headBobTimer) * this.bobAmp;
+    const bobT = moving ? (this.isSprinting ? 0.06 : this.isCrouching ? 0.012 : 0.03) : 0;
+    this.bobAmp = damp(this.bobAmp, bobT, 8, dt);
+    this.camera.position.y = this.camHeight + Math.sin(this.headBob) * this.bobAmp;
   }
 
-  canStandAt(x, z) {
-    const room = this.activeRoom;
-    if (!room) return true;
-    const b = room.bounds, r = 0.35;
-    if (x < b.minX + r || x > b.maxX - r || z < b.minZ + r || z > b.maxZ - r) return false;
-    for (const c of room.colliders) {
-      if (x > c[0] - r && x < c[1] + r && z > c[2] - r && z < c[3] + r) return false;
-    }
-    return true;
-  }
-
-  checkRaycastInteractions() {
-    if (!this.isLocked || this.isDead || this.hasWon) return;
-
-    // Raycast from camera center
-    const camDir = new THREE.Vector3();
-    this.camera.getWorldDirection(camDir);
-
-    const promptEl = document.getElementById('interact-prompt');
-    const promptText = document.getElementById('prompt-text');
-    const reticle = document.getElementById('reticle');
-
-    let closest = null;
-    let minAngle = 0.5; // cone angle in radians
-
-    for (let item of this.interactiveObjects) {
-      const toItem = item.pos.clone().sub(this.camera.position);
-      const dist = toItem.length();
-      if (dist < 3.6) {
-        toItem.normalize();
-        const angle = camDir.angleTo(toItem);
-        if (angle < minAngle) {
-          minAngle = angle;
-          closest = item;
-        }
-      }
-    }
-
-    if (closest) {
-      this.currentInteractable = closest;
-      promptText.textContent = closest.prompt;
-      promptEl.style.display = 'block';
-      reticle.classList.add('highlight');
-    } else {
-      this.currentInteractable = null;
-      promptEl.style.display = 'none';
-      reticle.classList.remove('highlight');
-    }
-  }
-
-  triggerCurrentInteraction() {
-    if (this.currentInteractable && this.currentInteractable.action) {
-      this.currentInteractable.action();
-    }
+  // Everything that makes sound feeds the ghost's hearing model
+  makeNoise(x, z, roomId, loud, type, byGhost) {
+    if (byGhost || !this.ghost) return;
+    if (type === 'step' || type === 'door' || type === 'thrown' || type === 'gasp') this.noiseDisplay = Math.max(this.noiseDisplay || 0, loud * 55);
+    this.ghost.hear({ x, z, room: roomId, loud, type });
   }
 
   // ------------------------------------------------------------------------
-  // 6. Microphone & Bodycam Hardware Integration
+  // Main loop
   // ------------------------------------------------------------------------
-  initHardwareSetup() {
-    const btnMic = document.getElementById('btn-toggle-mic');
-    const btnCam = document.getElementById('btn-toggle-cam');
-    const micLabel = document.getElementById('mic-status-label');
-    const camLabel = document.getElementById('cam-status-label');
-
-    btnMic.addEventListener('click', async () => {
-      try {
-        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        this.setupAudioAnalyser(this.micStream);
-        this.micActive = true;
-        btnMic.classList.add('active');
-        micLabel.textContent = 'Connected, live level';
-      } catch (err) {
-        console.warn('Microphone error:', err);
-        alert('Could not access the microphone. The game will still pick up in-game movement noise.');
-      }
-    });
-
-    btnCam.addEventListener('click', async () => {
-      const videoEl = document.getElementById('webcam-stream');
-      const fallback = document.getElementById('cam-fallback');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 480 }, height: { ideal: 360 } }
-        });
-        videoEl.srcObject = stream;
-        videoEl.style.display = 'block';
-        fallback.style.display = 'none';
-        this.camActive = true;
-        btnCam.classList.add('active');
-        camLabel.textContent = 'Connected, night vision on';
-      } catch (err) {
-        console.warn('Camera error:', err);
-        alert('Could not access the camera. The bodycam will stay offline.');
-      }
-    });
-  }
-
-  setupAudioAnalyser(stream) {
-    if (!this.audioCtx) {
-      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-
-    const source = this.audioCtx.createMediaStreamSource(stream);
-    this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 512;
-    this.analyser.smoothingTimeConstant = 0.25;
-    source.connect(this.analyser);
-  }
-
-  updateMicrophoneTracking() {
-    let decibels = 0;
-
-    if (this.micActive && this.analyser) {
-      const data = new Uint8Array(this.analyser.frequencyBinCount);
-      this.analyser.getByteFrequencyData(data);
-
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        sum += data[i] * data[i];
-      }
-      const rms = Math.sqrt(sum / data.length);
-      decibels = Math.min(100, Math.round((rms / 128) * 100));
-    }
-
-    this.currentDecibels = decibels;
-
-    // HUD Update
-    const fill = document.getElementById('audio-fill');
-    const dbNum = document.getElementById('db-display');
-    const status = document.getElementById('audio-status');
-    const menuFill = document.getElementById('menu-mic-fill');
-
-    if (fill) fill.style.width = `${Math.max(4, decibels)}%`;
-    if (dbNum) dbNum.textContent = `${decibels} dB`;
-    if (menuFill) menuFill.style.width = `${decibels}%`;
-
-    // Alert thresholds
-    if (decibels >= this.micThreshold) {
-      if (status) {
-        status.textContent = 'Too loud';
-        status.dataset.level = 'danger';
-      }
-      this.alertEntity(this.camera.position, decibels > 55 ? 'hunt' : 'investigate');
-    } else if (decibels > this.micThreshold * 0.5) {
-      if (status) {
-        status.textContent = 'Breathing audible';
-        status.dataset.level = 'caution';
-      }
-    } else {
-      if (status) {
-        status.textContent = 'Quiet';
-        status.dataset.level = 'safe';
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------------
-  // 7. Procedural Web Audio Engine
-  // ------------------------------------------------------------------------
-  playProceduralSound(type) {
-    if (!this.synthCtx) {
-      this.synthCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (this.synthCtx.state === 'suspended') this.synthCtx.resume();
-
-    const t = this.synthCtx.currentTime;
-
-    if (type === 'footstep') {
-      const osc = this.synthCtx.createOscillator();
-      const gain = this.synthCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(80, t);
-      osc.frequency.exponentialRampToValueAtTime(30, t + 0.1);
-      gain.gain.setValueAtTime(0.08, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-      osc.connect(gain);
-      gain.connect(this.synthCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.1);
-    } else if (type === 'door') {
-      const osc = this.synthCtx.createOscillator();
-      const gain = this.synthCtx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(70, t);
-      osc.frequency.linearRampToValueAtTime(110, t + 0.35);
-      gain.gain.setValueAtTime(0.2, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-      osc.connect(gain);
-      gain.connect(this.synthCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.4);
-    } else if (type === 'click') {
-      const osc = this.synthCtx.createOscillator();
-      const gain = this.synthCtx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(1400, t);
-      gain.gain.setValueAtTime(0.1, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-      osc.connect(gain);
-      gain.connect(this.synthCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.05);
-    } else if (type === 'pickup' || type === 'relic') {
-      const osc = this.synthCtx.createOscillator();
-      const gain = this.synthCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(300, t);
-      osc.frequency.exponentialRampToValueAtTime(type === 'relic' ? 680 : 550, t + 0.6);
-      gain.gain.setValueAtTime(0.25, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-      osc.connect(gain);
-      gain.connect(this.synthCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.7);
-    } else if (type === 'growl' || type === 'roar' || type === 'jumpscare') {
-      const osc1 = this.synthCtx.createOscillator();
-      const osc2 = this.synthCtx.createOscillator();
-      const gain = this.synthCtx.createGain();
-
-      osc1.type = 'sawtooth';
-      osc2.type = 'square';
-      const startFreq = (type === 'jumpscare') ? 950 : 220;
-      const endFreq = (type === 'jumpscare') ? 140 : 65;
-
-      osc1.frequency.setValueAtTime(startFreq, t);
-      osc1.frequency.exponentialRampToValueAtTime(endFreq, t + 0.9);
-      osc2.frequency.setValueAtTime(startFreq + 40, t);
-      osc2.frequency.exponentialRampToValueAtTime(endFreq - 20, t + 0.9);
-
-      gain.gain.setValueAtTime(0.4, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(this.synthCtx.destination);
-      osc1.start(t);
-      osc2.start(t);
-      osc1.stop(t + 1.0);
-      osc2.stop(t + 1.0);
-    }
-  }
-
-  startAmbientDrone() {
-    if (!this.synthCtx) {
-      this.synthCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (this.synthCtx.state === 'suspended') this.synthCtx.resume();
-
-    const osc = this.synthCtx.createOscillator();
-    const filter = this.synthCtx.createBiquadFilter();
-    const gain = this.synthCtx.createGain();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(45, this.synthCtx.currentTime);
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(120, this.synthCtx.currentTime);
-    gain.gain.setValueAtTime(0.12, this.synthCtx.currentTime);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.synthCtx.destination);
-    osc.start();
-  }
-
-  // ------------------------------------------------------------------------
-  // 8. Game Loop & States
-  // ------------------------------------------------------------------------
-  initHUD() {
-    const btnPlay = document.getElementById('btn-play-game');
-    const startModal = document.getElementById('start-menu');
-    const btnRetry = document.getElementById('btn-retry');
-    const btnPlayAgain = document.getElementById('btn-play-again');
-
-    btnPlay.addEventListener('click', () => {
-      startModal.style.display = 'none';
-      this.isPlaying = true;
-      this.startTime = performance.now();
-      this.startAmbientDrone();
-      this.container.requestPointerLock();
-    });
-
-    btnRetry.addEventListener('click', () => {
-      location.reload();
-    });
-
-    btnPlayAgain.addEventListener('click', () => {
-      location.reload();
-    });
-
-    setInterval(() => {
-      const bpmEl = document.getElementById('hud-bpm');
-      if (bpmEl) {
-        const isHunting = (this.entityState === 'HUNT');
-        const base = isHunting ? 152 : 94;
-        const jitter = Math.floor(Math.random() * 8) - 4;
-        bpmEl.textContent = `${base + jitter} bpm`;
-      }
-    }, 1100);
-  }
-
-  formatElapsed() {
-    const s = Math.round((performance.now() - (this.startTime || performance.now())) / 1000);
-    return `m ${String(s % 60).padStart(2, '0')}s`;
-  }
-
-  triggerDeath() {
-    this.isDead = true;
-    document.getElementById('death-stats').textContent = `Time survived  ${this.formatElapsed()}`;
-    this.playProceduralSound('jumpscare');
-
-    const scareOverlay = document.getElementById('jumpscare-overlay');
-    scareOverlay.style.display = 'block';
-
-    setTimeout(() => {
-      scareOverlay.style.display = 'none';
-      document.exitPointerLock();
-      document.getElementById('game-over-modal').style.display = 'flex';
-    }, 1200);
-  }
-
-  triggerVictory() {
-    this.hasWon = true;
-    document.getElementById('win-stats').textContent = `Escape time  ${this.formatElapsed()}`;
-    document.exitPointerLock();
-    document.getElementById('victory-modal').style.display = 'flex';
-  }
-
   animate() {
     requestAnimationFrame(() => this.animate());
-
-    const delta = Math.min(this.clock.getDelta(), 0.1);
-    const time = this.clock.elapsedTime;
-
-    if (this.isPlaying && !this.isDead && !this.hasWon) {
-      this.updateMovement(delta);
-      this.checkRaycastInteractions();
-      this.updateEntity(delta);
-      this.updateMicrophoneTracking();
-    }
-
-    this.updateAtmosphere(delta, time);
+    const dt = Math.min(this.clock.getDelta(), 0.1);
+    this.step(dt);
+    if (this.room && this.room.mirror) renderMirror(this, this.room.mirror);
     this.renderer.render(this.scene, this.camera);
   }
 
-  // Candle flicker, drifting particles and small prop animation
-  updateAtmosphere(delta, time) {
-    for (const f of this.flicker) {
-      if (f.room !== this.currentRoom) continue;
-      const n = 0.5 * Math.sin(time * f.speed + f.phase) + 0.3 * Math.sin(time * f.speed * 2.7 + f.phase * 1.3) + (Math.random() - 0.5) * 0.3;
-      f.light.intensity = f.base * (1 + f.amp * n);
+  step(dt) {
+    this.time += dt;
+    const playing = this.isPlaying && !this.isDead && !this.hasWon;
+    if (playing) { this.clockT += dt; }
+    this.tweens.update(dt);
+    if (!this.room) return;
+    if (playing) {
+      this.updateMovement(dt);
+      this.updateStage();
+      this.interact.update(dt);
+      this.hiding.update(dt);
+      this.updateLooseItems(dt);
+      this.updateMicrophone(dt);
+      this.checkExitApproach();
+      this.director.update(dt);
+      this.fear.update(dt);
     }
+    this.ghost.update(dt);
+    Object.values(this.world.doors).forEach(d => d.update(dt));
+    this.room.updaters.forEach(fn => fn(dt, this.time));
+    this.atmosphere.update(dt);
+    this.updateFlashlight(dt);
+    this.applyCamera(dt);
+    this.updateDust(dt);
+    this.screenFX.update(dt);
+    this.hud.updateGrain(dt);
+    this.updateAudioState(dt);
+    this.currentRoomChanged = false;
+  }
 
-    // The flashlight stutters while something is hunting you
-    if (this.isFlashlightOn && this.flashlight) {
-      const hunted = this.entityState === 'HUNT' && Math.random() < 0.04;
-      this.flashlight.intensity = hunted ? this.flashlightBase * 0.25 : this.flashlightBase;
+  updateDust(dt) {
+    const p = this.dust.geometry.attributes.position.array, c = this.camera.position;
+    this.dust.position.set(c.x, 0, c.z);
+    for (let i = 0; i < p.length; i += 3) { p[i + 1] += dt * 0.03; p[i] += Math.sin(this.time * 0.3 + i) * dt * 0.02; if (p[i + 1] > 3) p[i + 1] = 0; }
+    this.dust.geometry.attributes.position.needsUpdate = true;
+  }
+
+  updateAudioState(dt) {
+    const gh = this.ghost, pres = gh.presence();
+    let pan = 0;
+    if (gh.inPlayerRoom()) { const r = TMP.v1.set(1, 0, 0).applyQuaternion(this.camera.quaternion); pan = (gh.x - this.camera.position.x) * r.x + (gh.z - this.camera.position.z) * r.z; pan = clamp(pan / 6, -1, 1); }
+    this.audio.setState(this.fear.v, this.stage / 3, pres, pan);
+    this.audio.update(dt, this.camera);
+    this.bpmT = (this.bpmT || 0) - dt;
+    if (this.bpmT <= 0) { this.bpmT = 1.1; document.getElementById('hud-bpm').textContent = Math.round(66 + this.fear.v * 0.95 + Math.random() * 4) + ' bpm'; }
+    document.getElementById('fear-fill').style.width = this.fear.v.toFixed(0) + '%';
+  }
+
+  // ------------------------------------------------------------------------
+  // A run: seed -> layout -> world. Restart rebuilds everything (no page reload).
+  // ------------------------------------------------------------------------
+  newRun(seedText, keepSeed) {
+    const seed = (seedText && String(seedText).trim().toUpperCase()) || RNG.randomSeed();
+    let layout = null, tries = 0;
+    do { layout = WORLD_DATA.generateLayout(new RNG(seed + (tries ? '#' + tries : '')), this.prevLayout); tries++; } while (!WORLD_DATA.validate(layout).ok && tries < 8);
+    layout.seed = seed; this.seed = seed; this.layout = layout;
+    this.prevLayout = { relicSpot: layout.relicSpot, keySpots: layout.keySpots };
+    this.tweens.cancelAll(); this.atmosphere.phantomClear();
+    this.world.build(layout);
+    this.setupExtras();
+    this.inventory.reset(); this.hiding.reset(); this.director.reset(); this.atmosphere.reset(); this.fear.reset();
+    this.scares.saved = null; this.scares.busy = false; this.scares.exitDone = false;
+    this.unlocked = new Set(); this.looseItems = [];
+    this.isDead = false; this.hasWon = false; this.inputLocked = false; this.transitioning = false; this.redAlert = false; this.look = null;
+    this.battery = 100; this.lighterOn = false; this.flashlightOn = true; this.isCrouching = false; this.clockT = 0; this.stage = 0; this.relicTaken = false;
+    this.camHeight = CONFIG.player.eye;
+    this.hud.setBattery(100); this.hud.setHidden(false); this.hud.blackout(false);
+    this.camera.fov = this.baseFov; this.camera.updateProjectionMatrix();
+    this.ghost.reset();
+    Object.values(this.world.rooms).forEach(r => { r.visited = false; });
+    this.switchRoom('corridor', null);
+    this.camera.position.set(0, CONFIG.player.eye, 9); this.euler.set(0, 0, 0, 'YXZ');
+    this.updateObjective();
+    const s = document.getElementById('menu-seed'); if (s) s.placeholder = seed;
+    document.getElementById('hud-seed').textContent = 'Seed ' + seed;
+    console.log('[run] seed', seed, 'relic', layout.relicSpot, 'keys', JSON.stringify(layout.keySpots), 'locks', JSON.stringify(layout.keyForSlot));
+  }
+
+  switchRoom(roomId, arrivalDoor) {
+    const room = this.world.rooms[roomId], prev = this.room;
+    Object.values(this.world.rooms).forEach(r => { r.group.visible = r === room; });
+    this.room = room; this.currentRoom = roomId; this.currentRoomChanged = true; room.visited = true;
+    this.scene.fog.color.setHex(room.def.fog[0]); this.scene.fog.density = room.def.fog[1];
+    this.ambient.color.setHex(room.def.ambient[0]); this.ambient.intensity = room.def.ambient[1];
+    this.audio.setRoom(room);
+    this.interact.clearFocus(); this.interact.cancelPending();
+    if (arrivalDoor) {
+      const s = arrivalDoor.spawn;
+      this.camera.position.set(s[0], this.eyeHeight(), s[1]);
+      this.euler.set(0, yawFromDir(arrivalDoor.n[0], arrivalDoor.n[1]), 0, 'YXZ');
+      arrivalDoor.snap(true); arrivalDoor.autoClose = true;
     }
+    if (prev && prev !== room) this.ghost.onPlayerRoomChange(prev.id, roomId);
+    this.updateObjective();
+    if (room.trap && !room.trapDone && arrivalDoor && this.isPlaying) this.fireTrap(room, arrivalDoor);
+    this.hud.renderInventory();
+  }
 
-    // Dust follows the player
-    if (this.dustParticles) {
-      this.dustParticles.position.set(this.camera.position.x, 0, this.camera.position.z);
-      const pos = this.dustParticles.geometry.attributes.position.array;
-      for (let i = 0; i < pos.length; i += 3) {
-        pos[i + 1] += delta * 0.03;
-        pos[i] += Math.sin(time * 0.3 + i) * delta * 0.02;
-        if (pos[i + 1] > 3) pos[i + 1] = 0;
+  // Walk through an open doorway: ease to black, swap rooms, ease back in
+  useDoor(door) {
+    if (this.transitioning || !door.pair) return;
+    this.transitioning = true; this.interact.cancelPending(); this.keys = Object.assign({}, this.keys);
+    this.hud.fade(true, 260);
+    this.tweens.after(0.3, () => {
+      const dest = door.pair.room.id;
+      door.snap(false); door.autoClose = false;
+      this.switchRoom(dest, door.pair);
+      this.hud.fade(false, 420);
+      this.tweens.after(0.2, () => { this.transitioning = false; });
+    });
+  }
+
+  // Trap rooms: non-lethal, telegraphed, and never block the way out for long
+  fireTrap(room, door) {
+    room.trapDone = true;
+    const kind = room.trap;
+    if (kind === 'slam') {
+      this.tweens.after(1.4, () => { door.slam(1); door.jam(11); this.lightsOut(6); this.audio.whisper(null, 0.6); this.cameraShake(0.3); this.fear.add(20); this.hud.toast('The door will not open'); this.audio.say('[The door slams shut]'); });
+    } else if (kind === 'dark') {
+      room.dark = true; this.hud.toast('The air is wrong in here');
+      this.tweens.after(14, () => { room.dark = false; });
+      for (let i = 0; i < 4; i++) this.tweens.after(1 + i * 2.2, () => this.audio.whisper(this.director.behind(), 0.5));
+    } else if (kind === 'ghostwait') {
+      const gh = this.ghost; this.scares.beginScript();
+      const far = room.waypoints.slice().sort((a, b) => dist2D(b.x, b.z, this.camera.position.x, this.camera.position.z) - dist2D(a.x, a.z, this.camera.position.x, this.camera.position.z))[0];
+      gh.formTarget = 1; gh.form = 0.9; gh.setPose({ headTilt: 0.2 });
+      gh.place(far.x, far.z, Math.atan2(this.camera.position.x - far.x, this.camera.position.z - far.z), 0); gh.group.visible = true;
+      this.fear.add(15); this.audio.growl({ x: far.x, y: 1.4, z: far.z });
+      this.tweens.after(3.2, () => { this.scares.endScript(); });
+    }
+  }
+
+  flickerLights(sec) { this.atmosphere.flicker(this.access.reduceFlashing ? sec * 0.5 : sec); }
+  lightsOut(sec, red) { this.atmosphere.lightsOut(sec); if (red) this.redAlert = true; }
+
+  // ------------------------------------------------------------------------
+  // Progress: stage (calm, uneasy, dread, panic), objective text
+  // ------------------------------------------------------------------------
+  updateStage() {
+    const t = this.clockT, S = CONFIG.stageSeconds;
+    const ts = t > S[2] ? 3 : t > S[1] ? 2 : t > S[0] ? 1 : 0;
+    const ps = this.hasRelic ? 3 : this.unlocked.size >= 2 ? 2 : (this.unlocked.size >= 1 || this.hasKey) ? 1 : 0;
+    const st = Math.max(ts, ps);
+    if (st !== this.stage) { this.stage = st; this.hud.toast(['', 'The house stirs', 'Something is hunting for you', 'It is awake'][st] || ''); this.scene.fog.density = this.room.def.fog[1] * (1 + st * 0.12); }
+  }
+
+  updateObjective() {
+    let t;
+    if (this.hasRelic) t = 'Run to the front door';
+    else if (this.unlocked.size >= 3) t = 'Find the horned skull';
+    else if (this.hasKey) t = 'You hold a key. Something here is locked';
+    else t = 'Search the house for keys, and a way into the crypt';
+    this.hud.setObjective(t);
+  }
+
+  // ------------------------------------------------------------------------
+  // Events from the interaction layer
+  // ------------------------------------------------------------------------
+  onDoorUnlocked(door, key) {
+    this.unlocked.add(door.def.slot); this.inventory.removeItem(key);
+    this.makeNoise(door.bx, door.bz, door.room.id, 0.3, 'unlock'); this.updateObjective();
+  }
+  onExitOpened(door) {
+    this.scares.exitScare();
+    if (door.chains) door.chains.forEach(c => { c.visible = false; });
+    this.hud.toast('The chains fall away');
+  }
+  checkExitApproach() {
+    const g = this.world.doors.c_exit;
+    if (this.hasRelic && this.currentRoom === 'corridor' && this.camera.position.z > 9.2 && !this.scares.exitDone && this.ghost.state !== 'HUNT') this.scares.exitScare();
+    if (g && g.st === 'open' && g.t > 0.6 && this.currentRoom === 'corridor' && this.camera.position.z > 11.2 && !this.hasWon) this.triggerVictory();
+  }
+  onItemPickedUp(wi) {
+    const it = wi.item, g = this;
+    this.looseItems = this.looseItems.filter(x => x !== wi);
+    this.updateObjective();
+    if (it.def.mimic === 'key') {
+      this.tweens.after(0.4, () => { this.scares.fakeout('painting'); this.makeNoise(g.camera.position.x, g.camera.position.z, g.currentRoom, 0.8, 'crash'); this.hud.toast('It was a trap'); this.fear.add(16); });
+    } else if (it.def.mimic === 'relic') {
+      this.tweens.after(0.3, () => { this.audio.growl(null); this.makeNoise(g.camera.position.x, g.camera.position.z, g.currentRoom, 0.95, 'curse'); this.hud.toast('A false relic. It heard that'); this.fear.add(20); });
+    } else if (it.id === 'relic' && !this.relicTaken) {
+      this.relicTaken = true;
+      const p = wi.mesh.position;
+      this.scares.relic({ x: p.x, y: p.y, z: p.z });
+    }
+  }
+  triggerVictory() {
+    if (this.hasWon) return;
+    this.hasWon = true; this.audio.setChase(false); this.audio.stopAmbience(3); document.exitPointerLock();
+    this.hud.fade(true, 900);
+    this.tweens.after(1.0, () => {
+      document.getElementById('win-stats').textContent = 'Escape time  ' + this.formatElapsed() + '\nSeed  ' + this.seed;
+      this.hud.showModal(document.getElementById('victory-modal')); this.hud.fade(false, 100);
+    });
+  }
+  showDeath(type) {
+    this.audio.setChase(false); this.audio.stopAmbience(1.5); document.exitPointerLock();
+    const lines = DEATH_TEXT[type] || DEATH_TEXT.ghost;
+    document.getElementById('death-sub').textContent = lines[Math.floor(Math.random() * lines.length)];
+    document.getElementById('death-stats').textContent = 'Time survived  ' + this.formatElapsed() + '\nSeed  ' + this.seed;
+    this.hud.showModal(document.getElementById('game-over-modal'));
+  }
+  formatElapsed() { const s = Math.round(this.clockT); return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's'; }
+
+  // Retry without reloading: tear down and rebuild with a new (or the same) seed
+  restart(sameSeed) {
+    ['game-over-modal', 'victory-modal'].forEach(id => this.hud.hideModal(document.getElementById(id)));
+    const seed = sameSeed ? this.seed : null;
+    this.prevLayout = sameSeed ? null : this.prevLayout;
+    this.newRun(seed);
+    this.isPlaying = true; this.hud.blackout(false); this.hud.fade(false, 100);
+    this.audio.startAmbience(); this.container.requestPointerLock();
+    this.tweens.after(0.1, () => { this.clock.getDelta(); });
+  }
+
+  // ------------------------------------------------------------------------
+  // Items: use, drop, throw
+  // ------------------------------------------------------------------------
+  useSelected() {
+    const inv = this.inventory, it = inv.current;
+    if (!it || this.hiding.busy) return;
+    if (this.interact.use()) return;
+    const gh = this.ghost, k = it.def.kind, hud = this.hud, p = this.camera.position;
+    const near = gh.inPlayerRoom() && gh.state !== 'DORMANT' && gh.distToPlayer();
+    if (k === 'battery') {
+      if (this.battery > 92) { hud.toast('The flashlight is nearly full'); return; }
+      this.battery = Math.min(100, this.battery + 60); inv.removeItem(it); this.audio.battery(); hud.setBattery(this.battery); hud.toast('Battery replaced');
+    } else if (k === 'lighter') { this.lighterOn = !this.lighterOn; this.audio.click(); hud.toast(this.lighterOn ? 'Lighter lit' : 'Lighter out'); }
+    else if (k === 'crucifix') {
+      if (near && near < 8) { gh.repel(7); it.charges--; hud.toast('It recoils from the cross'); if (it.charges <= 0) { inv.removeItem(it); hud.toast('The crucifix cracks'); } inv.emit('change'); }
+      else hud.toast('Nothing here to drive back');
+    } else if (k === 'locket') {
+      if (near && near < 10) { gh.stun(4); inv.removeItem(it); hud.toast('The locket crumbles to dust'); } else hud.toast('The locket stays cold');
+    } else if (k === 'mirror') {
+      if (it.charges <= 0) return;
+      it.charges--; inv.emit('change');
+      let msg = 'Nothing in the glass';
+      if (gh.state !== 'DORMANT') {
+        if (gh.inPlayerRoom()) { const dx = gh.x - p.x, dz = gh.z - p.z, f = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion), r = TMP.v2.set(1, 0, 0).applyQuaternion(this.camera.quaternion); const fa = dx * f.x + dz * f.z, ra = dx * r.x + dz * r.z; msg = 'In the glass: ' + (Math.abs(fa) > Math.abs(ra) ? (fa > 0 ? 'ahead of you' : 'behind you') : (ra > 0 ? 'to your right' : 'to your left')) + ', ' + Math.round(Math.hypot(dx, dz)) + ' m away'; }
+        else msg = 'In the glass: it is in the ' + gh.room.def.name.toLowerCase(); }
+      hud.toast(msg); this.audio.click(); if (it.charges <= 0) { inv.removeItem(it); hud.toast('The shard slips and shatters'); this.audio.glass(null); }
+    } else if (k === 'musicbox') {
+      inv.removeItem(it); const wi = this.spawnLoose(it, p.x + 0, 0.06, p.z, null, true);
+      this.audio.musicBox({ x: wi.mesh.position.x, y: 0.3, z: wi.mesh.position.z }, 0.35, true); wi.active = 9;
+      this.makeNoise(p.x, p.z, this.currentRoom, 0.8, 'music'); hud.toast('You wind the music box and set it down');
+    } else if (k === 'fuse') hud.toast('It fits the fuse box in the cellar');
+    else if (k === 'junk') this.dropSelected(true);
+    else if (k === 'key') hud.toast('Use it on a lock');
+  }
+
+  dropSelected(throwIt) {
+    const inv = this.inventory, it = inv.current, p = this.camera.position;
+    if (!it || this.hiding.active) return;
+    inv.remove(inv.selected);
+    const f = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const vel = throwIt ? new THREE.Vector3(f.x * 7.5, f.y * 7.5 + 2.2, f.z * 7.5) : new THREE.Vector3(f.x * 0.8, 0.5, f.z * 0.8);
+    const wi = this.spawnLoose(it, p.x + f.x * 0.5, p.y - 0.25, p.z + f.z * 0.5, vel);
+    wi.throwLoud = throwIt ? CONFIG.loudness.thrown : CONFIG.loudness.drop * 0.5;
+    this.hud.toast((throwIt ? 'Threw ' : 'Dropped ') + it.def.name.toLowerCase());
+  }
+
+  spawnLoose(item, x, y, z, vel, still) {
+    const wi = new WorldItem(this, item);
+    wi.attach(this.room.group, x, y, z); wi.room = this.room; wi.vel = vel || null; wi.spin = Math.random() * 6; wi.throwLoud = 0.4;
+    const hit = new THREE.Mesh(Cache.geo('hit.sph', () => new THREE.SphereGeometry(0.22, 8, 6)), Cache.mat('hit.mat', () => new THREE.MeshBasicMaterial({ visible: false }))); hit.position.y = 0.08; wi.mesh.add(hit);
+    const meshes = []; wi.mesh.traverse(o => { if (o.isMesh) meshes.push(o); });
+    wi.interactable = new Interactable(this, { id: 'loose' + item.uid, room: this.room, meshes, reach: 2.8, prompt: () => (item.def.kind === 'note' ? 'Read note' : 'Take ' + item.def.name.toLowerCase()), onInteract: () => wi.pickUp() });
+    wi.interactable.enabled = !vel;
+    this.looseItems.push(wi);
+    return wi;
+  }
+
+  updateLooseItems(dt) {
+    for (const wi of this.looseItems) {
+      if (wi.picking) continue;
+      if (wi.active > 0) {
+        wi.active -= dt; wi.noiseT = (wi.noiseT || 0) - dt;
+        if (wi.noiseT <= 0) { wi.noiseT = 1.4; this.makeNoise(wi.mesh.position.x, wi.mesh.position.z, this.currentRoom, 0.55, 'music'); }
       }
-      this.dustParticles.geometry.attributes.position.needsUpdate = true;
-    }
-
-    if (this.currentRoom === 'parlor' && this.fireEmbers) {
-      const pos = this.fireEmbers.geometry.attributes.position.array;
-      for (let i = 1; i < pos.length; i += 3) {
-        pos[i] += delta * (0.5 + (i % 5) * 0.12);
-        if (pos[i] > 1.8) pos[i] = 0.1;
+      if (!wi.vel) continue;
+      const m = wi.mesh, v = wi.vel;
+      v.y -= 9.8 * dt;
+      const nx = m.position.x + v.x * dt, nz = m.position.z + v.z * dt;
+      if (wi.room.blocked(nx, nz, 0.06)) { v.x *= -0.3; v.z *= -0.3; } else { m.position.x = nx; m.position.z = nz; }
+      m.position.y += v.y * dt; m.rotation.y += dt * 8; m.rotation.x += dt * 3;
+      if (m.position.y <= 0.06) {
+        m.position.y = 0.06;
+        const impact = Math.abs(v.y);
+        if (impact > 1.4) { v.y = impact * 0.35; v.x *= 0.6; v.z *= 0.6; this.audio.land(clamp(impact / 7, 0.2, 1), { x: m.position.x, y: 0.2, z: m.position.z }); this.makeNoise(m.position.x, m.position.z, wi.room.id, wi.throwLoud * clamp(impact / 6, 0.4, 1), 'thrown'); }
+        else { wi.vel = null; m.rotation.x = 0; wi.interactable.enabled = true; }
       }
-      this.fireEmbers.geometry.attributes.position.needsUpdate = true;
-      (this.fireFlames || []).forEach((f, i) => {
-        f.scale.y = 0.85 + 0.3 * Math.sin(time * 9 + i * 2) + Math.random() * 0.1;
-        f.scale.x = f.scale.z = 0.9 + 0.15 * Math.sin(time * 7 + i);
-      });
     }
+  }
 
-    if (this.currentRoom === 'crypt' && this.greenSmoke) {
-      const pos = this.greenSmoke.geometry.attributes.position.array;
-      for (let i = 1; i < pos.length; i += 3) {
-        pos[i] += delta * 0.18;
-        if (pos[i] > 1.6) pos[i] = 0;
-      }
-      this.greenSmoke.geometry.attributes.position.needsUpdate = true;
-    }
+  // The cellar fuse box accepts the fuse and powers an emergency lamp
+  setupExtras() {
+    const room = this.world.rooms.cellar, fb = room.fuseBox, game = this;
+    if (!fb) return;
+    fb.ia = new Interactable(this, { id: 'fusebox', room, meshes: [fb.mesh], reach: 2.8,
+      prompt: () => (fb.powered ? 'The fuse box hums' : 'A fuse is missing'),
+      onInteract: () => { if (fb.powered) return; const f = game.inventory.slots.find(s => s && s.id === 'fuse'); if (!f) game.hud.toast('A fuse is missing'); else game.fuseBoxUse(f); },
+      onUse: it => { if (it && it.id === 'fuse' && !fb.powered) { game.fuseBoxUse(it); return true; } return false; } });
+  }
+  fuseBoxUse(fuse) {
+    const room = this.world.rooms.cellar, fb = room.fuseBox;
+    fb.powered = true; this.inventory.removeItem(fuse); this.audio.unlock(null); this.audio.battery();
+    const lamp = this.world.addLight(room, 0xfff4d8, 2.4, 14, 0, 2.4, 0, null); room.lightLevel = 0.9; room.role = 'safe';
+    room.flickers = room.flickers.filter(f => f.light.color.getHex() !== 0xfff0c0);
+    this.hud.toast('The cellar lights steady. It cannot follow where the lamp burns'); this.fear.add(-25);
+  }
 
-    if (this.silverKeyMesh && this.silverKeyMesh.visible) {
-      this.silverKeyMesh.rotation.y += delta * 1.4;
-      this.silverKeyMesh.position.y = 1.32 + Math.sin(time * 2) * 0.03;
+  // ------------------------------------------------------------------------
+  // Microphone and bodycam (both optional; the game runs without them)
+  // ------------------------------------------------------------------------
+  initHardware() {
+    const btnMic = document.getElementById('btn-toggle-mic'), btnCam = document.getElementById('btn-toggle-cam');
+    btnMic.addEventListener('click', async () => {
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+        const src = this.audioCtx.createMediaStreamSource(this.micStream); this.analyser = this.audioCtx.createAnalyser(); this.analyser.fftSize = 512; this.analyser.smoothingTimeConstant = 0.25; src.connect(this.analyser);
+        this.micActive = true; btnMic.classList.add('active'); document.getElementById('mic-status-label').textContent = 'Connected, live level';
+      } catch (err) { console.warn('Microphone unavailable:', err); document.getElementById('mic-status-label').textContent = 'Unavailable. Keyboard noise only'; }
+    });
+    btnCam.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 480 }, height: { ideal: 360 } } });
+        const v = document.getElementById('webcam-stream'); v.srcObject = stream; v.style.display = 'block'; document.getElementById('cam-fallback').style.display = 'none';
+        this.camActive = true; btnCam.classList.add('active'); document.getElementById('cam-status-label').textContent = 'Connected, night vision on';
+      } catch (err) { console.warn('Camera unavailable:', err); document.getElementById('cam-status-label').textContent = 'Unavailable. Bodycam stays offline'; }
+    });
+  }
+
+  updateMicrophone(dt) {
+    let dec = 0;
+    if (this.micActive && this.analyser) {
+      const data = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(data);
+      let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      dec = Math.min(100, Math.round(Math.sqrt(sum / data.length) / 128 * 100));
     }
-    if (this.relicMesh && this.relicMesh.visible) {
-      this.relicMesh.rotation.y += delta * 0.8;
-      this.relicMesh.position.y = 1.4 + Math.sin(time * 1.6) * 0.04;
-    }
+    this.micLevel = dec;
+    this.noiseDisplay = Math.max(dec, (this.noiseDisplay || 0) - dt * 60);
+    const shown = Math.round(this.noiseDisplay), thr = this.hiding.active ? CONFIG.micThresholdHidden : CONFIG.micThreshold;
+    const fill = document.getElementById('audio-fill'), mf = document.getElementById('menu-mic-fill'), st = document.getElementById('audio-status');
+    fill.style.width = Math.max(4, shown) + '%'; document.getElementById('db-display').textContent = shown + ' dB'; if (mf) mf.style.width = dec + '%';
+    const lvl = shown >= thr ? 'danger' : shown > thr * 0.5 ? 'caution' : 'safe';
+    if (st.dataset.level !== lvl) { st.dataset.level = lvl; st.textContent = lvl === 'danger' ? 'Too loud' : lvl === 'caution' ? 'Breathing audible' : 'Quiet'; }
+    this.micT = (this.micT || 0) - dt;
+    if (dec >= thr && this.micT <= 0) { this.micT = 0.5; this.makeNoise(this.camera.position.x, this.camera.position.z, this.currentRoom, clamp(dec / 55, 0.45, 1.1), 'mic'); this.fear.add(2); }
+  }
+
+  // ------------------------------------------------------------------------
+  // Start menu
+  // ------------------------------------------------------------------------
+  initMenu() {
+    const $ = id => document.getElementById(id);
+    $('btn-play-game').addEventListener('click', () => {
+      this.audio.ensure();
+      this.cfg = CONFIG.difficulties[$('menu-diff').value] || CONFIG.difficulties.normal;
+      this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked };
+      const typed = $('menu-seed').value.trim().toUpperCase();
+      if (typed && typed !== this.seed) this.newRun(typed); else this.ghost.reset();
+      this.hud.hideModal($('start-menu')); this.isPlaying = true; this.clockT = 0;
+      this.audio.startAmbience(); this.container.requestPointerLock();
+      document.getElementById('hud-layer').classList.add('live');
+    });
+    $('btn-retry').addEventListener('click', () => this.restart(false));
+    $('btn-retry-same').addEventListener('click', () => this.restart(true));
+    $('btn-play-again').addEventListener('click', () => this.restart(false));
+    $('note-modal').addEventListener('click', () => this.hud.closeNote());
   }
 }
 
-// Start Game on load
 window.addEventListener('load', () => {
-  window.__game = new HorrorGame();
+  try {
+    window.__game = new HorrorGame();
+    window.__game.debug = new DebugPanel(window.__game);
+  } catch (e) { console.error(e); document.body.insertAdjacentHTML('beforeend', '<pre style="position:fixed;inset:0;z-index:999;background:#000;color:#e88;padding:24px;overflow:auto">Could not start: ' + String(e && e.stack || e) + '</pre>'); }
 });

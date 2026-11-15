@@ -11,147 +11,139 @@
   <script src="assets/three.min.js"></script>
 </head>
 <body class="game-body">
-  <!-- Game 3D Canvas Container -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="chroma"><feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r"/><feOffset in="r" dx="-4" dy="0" result="ro"/><feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g"/><feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b"/><feOffset in="b" dx="4" dy="0" result="bo"/><feBlend in="ro" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="bo" mode="screen"/></filter>
+  </svg>
+
   <div id="game-container"></div>
 
-  <!-- Bodycam HUD -->
   <div class="hud-layer" id="hud-layer">
     <div class="vhs-scanlines"></div>
     <div class="vhs-vignette"></div>
-    <div class="vhs-timestamp" id="hud-timestamp"><span class="rec-dot"></span>Oct 31 1998 03:14</div>
+    <div class="fx-vignette" id="fx-vignette"></div>
+    <div class="fx-red" id="fx-red"></div>
+    <canvas class="fx-grain" id="fx-grain" width="160" height="90"></canvas>
+    <div id="hide-overlay"></div>
 
+    <div class="vhs-timestamp" id="hud-timestamp"><span class="rec-dot"></span>Oct 31 1998 03:14<span id="hud-seed" class="seed"></span></div>
     <div class="reticle" id="reticle"></div>
-    <div class="interact-prompt" id="interact-prompt">
-      <kbd>E</kbd><span id="prompt-text">Interact</span>
-    </div>
+    <div class="hold-ring" id="hold-ring"></div>
+    <div class="interact-prompt" id="interact-prompt"><kbd>E</kbd><span id="prompt-text"></span></div>
 
-    <!-- Top-right: bodycam feed -->
     <div class="bodycam-pip" id="bodycam-pip">
-      <div class="pip-header">
-        <span>Bodycam 01</span>
-        <span class="bpm-counter" id="hud-bpm">98 bpm</span>
-      </div>
+      <div class="pip-header"><span>Bodycam 01</span><span class="bpm-counter" id="hud-bpm">70 bpm</span></div>
       <div class="pip-screen">
         <video id="webcam-stream" autoplay playsinline muted></video>
-        <div class="cam-fallback" id="cam-fallback">
-          <span>No video feed</span>
-          <small>Enable the bodycam from the menu</small>
-        </div>
-        <div class="nv-filter"></div>
-        <div class="nv-scanlines"></div>
+        <div class="cam-fallback" id="cam-fallback"><span>No video feed</span><small>Enable the bodycam from the menu</small></div>
+        <div class="nv-filter"></div><div class="nv-scanlines"></div>
       </div>
     </div>
 
-    <!-- Bottom-left: noise meter -->
     <div class="hud-audio-meter" id="hud-audio-meter">
-      <div class="meter-label">
-        <span>Noise</span>
-        <span id="db-display" class="db-num">0 dB</span>
-      </div>
-      <div class="meter-track">
-        <div class="meter-fill" id="audio-fill"></div>
-        <div class="meter-danger-line" title="Threat threshold"></div>
-      </div>
+      <div class="meter-label"><span>Noise</span><span id="db-display" class="db-num">0 dB</span></div>
+      <div class="meter-track"><div class="meter-fill" id="audio-fill"></div><div class="meter-danger-line" title="Threat threshold"></div></div>
       <div class="meter-status" id="audio-status" data-level="safe">Quiet</div>
+      <div class="meter-label fear-row"><span>Nerves</span></div>
+      <div class="meter-track thin"><div class="fear-fill" id="fear-fill"></div></div>
     </div>
 
-    <!-- Bottom-right: stance and flashlight -->
     <div class="hud-controls-status">
       <div class="stance-indicator" id="stance-indicator">Standing</div>
-      <div class="battery-status">
-        <span>Flashlight <kbd>F</kbd></span>
-        <div class="battery-bar"><div class="battery-fill" id="battery-fill"></div></div>
-      </div>
+      <div class="battery-status"><span>Flashlight <kbd>F</kbd></span><div class="battery-bar"><div class="battery-fill" id="battery-fill"></div></div></div>
     </div>
 
-    <!-- Top-center: objective -->
-    <div class="hud-objective" id="hud-objective">
-      <span class="obj-tag">Objective</span>
-      <span class="obj-text" id="obj-text">Find the silver key to unlock the crypt</span>
+    <div class="hud-objective" id="hud-objective"><span class="obj-tag">Objective</span><span class="obj-text" id="obj-text">Search the house for keys, and a way into the crypt</span></div>
+    <div class="threat-alert" id="threat-alert" role="alert"></div>
+    <div id="toasts"></div>
+    <div id="subtitles"></div>
+    <div id="hide-cue"></div>
+    <div id="breath"><span>Breath <kbd>Space</kbd></span><div class="bar"><div id="breath-fill"></div></div></div>
+
+    <div id="hotbar"></div>
+    <div id="inv-panel">
+      <div class="inv-col"><h3>Items</h3><div id="inv-list"></div><p id="inv-desc"></p></div>
+      <div class="inv-col"><h3>Notes</h3><div id="inv-notes"></div></div>
+      <div class="inv-col"><h3>Map</h3><canvas id="inv-map" width="220" height="190"></canvas></div>
     </div>
 
-    <div class="threat-alert" id="threat-alert" role="alert">It heard you and is coming</div>
-
-    <div class="jumpscare-overlay" id="jumpscare-overlay">
-      <div class="monster-face" id="monster-face"></div>
-      <div class="static-distortion"></div>
-    </div>
+    <div class="jumpscare-overlay" id="jumpscare-overlay"></div>
+    <div id="flash"></div>
+    <div id="fade"></div>
   </div>
 
-  <!-- Start menu -->
-  <div class="menu-modal" id="start-menu">
+  <div id="note-modal" class="modal"><div class="paper"><p id="note-text"></p><small>Press E to put it away</small></div></div>
+
+  <div class="menu-modal modal visible" id="start-menu" style="display:flex">
     <div class="menu-backdrop"></div>
     <div class="menu-card">
-      <div class="menu-scene">
-        <div class="menu-scene-text">
-          <p class="menu-tagline">First-person stealth horror</p>
-          <h1 class="menu-title">Silent Shadows</h1>
-          <p class="menu-subtitle">The Samhain Extraction</p>
-        </div>
-      </div>
-
+      <div class="menu-scene"><div class="menu-scene-text">
+        <p class="menu-tagline">First-person stealth horror</p>
+        <h1 class="menu-title">Silent Shadows</h1>
+        <p class="menu-subtitle">The Samhain Extraction</p>
+      </div></div>
       <div class="menu-panel">
-        <p class="menu-brief">Take the cursed horned skull from the crypt of a Victorian manor. The entity listens through your microphone, so whispers, breathing and screams give you away.</p>
-
+        <p class="menu-brief">Take the cursed horned skull from a Victorian manor. Something wanders the house and listens. Every key, note and hiding place changes with the seed.</p>
         <div class="hardware-row">
-          <button id="btn-toggle-mic" class="hw-btn">
-            <svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-            <span class="hw-text">
-              <strong>Microphone</strong>
-              <small id="mic-status-label">Reacts to your real voice</small>
-            </span>
-          </button>
-
-          <button id="btn-toggle-cam" class="hw-btn">
-            <svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg>
-            <span class="hw-text">
-              <strong>Bodycam</strong>
-              <small id="cam-status-label">Shows your face in night vision</small>
-            </span>
-          </button>
+          <button id="btn-toggle-mic" class="hw-btn"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="hw-text"><strong>Microphone</strong><small id="mic-status-label">Reacts to your real voice</small></span></button>
+          <button id="btn-toggle-cam" class="hw-btn"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg><span class="hw-text"><strong>Bodycam</strong><small id="cam-status-label">Shows your face in night vision</small></span></button>
         </div>
-
-        <div class="menu-mic-preview">
-          <label for="menu-mic-fill">Microphone level</label>
-          <div class="menu-meter-track">
-            <div class="menu-meter-fill" id="menu-mic-fill"></div>
-          </div>
+        <div class="menu-mic-preview"><label>Microphone level</label><div class="menu-meter-track"><div class="menu-meter-fill" id="menu-mic-fill"></div></div></div>
+        <div class="opts">
+          <label class="opt"><span>Seed</span><input id="menu-seed" type="text" maxlength="12" placeholder="random" autocomplete="off" spellcheck="false"></label>
+          <label class="opt"><span>Difficulty</span><select id="menu-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="nightmare">Nightmare</option></select></label>
+          <label class="chk"><input id="menu-flash" type="checkbox"><span>Reduce flashing</span></label>
+          <label class="chk"><input id="menu-scares" type="checkbox"><span>Reduce scares</span></label>
+          <label class="chk"><input id="menu-subs" type="checkbox" checked><span>Subtitles for sounds</span></label>
         </div>
-
         <dl class="controls-guide">
-          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move</dd></div>
-          <div><dt>Mouse</dt><dd>Look</dd></div>
-          <div><dt><kbd>C</kbd></dt><dd>Crouch, moves quietly</dd></div>
-          <div><dt><kbd>Shift</kbd></dt><dd>Sprint, makes noise</dd></div>
-          <div><dt><kbd>E</kbd></dt><dd>Interact</dd></div>
-          <div><dt><kbd>F</kbd></dt><dd>Flashlight</dd></div>
+          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move, <kbd>Shift</kbd> sprint (loud), <kbd>C</kbd> crouch</dd></div>
+          <div><dt><kbd>E</kbd></dt><dd>Interact. Tap a door to open it fast, hold for slow and quiet</dd></div>
+          <div><dt><kbd>1</kbd>-<kbd>6</kbd></dt><dd>Select item, <kbd>R</kbd> use, <kbd>Q</kbd> drop, <kbd>Shift</kbd>+<kbd>Q</kbd> throw</dd></div>
+          <div><dt><kbd>Tab</kbd></dt><dd>Inventory, notes and map, <kbd>F</kbd> flashlight</dd></div>
+          <div><dt><kbd>Space</kbd></dt><dd>Hold your breath while hidden</dd></div>
+          <div><dt>Hide</dt><dd>Look at a wardrobe, bed, curtain or coffin and press <kbd>E</kbd></dd></div>
         </dl>
-
         <button id="btn-play-game" class="play-btn">Enter the house</button>
       </div>
     </div>
   </div>
 
-  <!-- Game over -->
-  <div class="end-modal" id="game-over-modal">
+  <div class="end-modal modal" id="game-over-modal">
     <div class="end-card">
       <h1 class="end-title death-title">You died</h1>
-      <p class="end-subtitle">It heard you in the dark</p>
+      <p class="end-subtitle" id="death-sub">It heard you in the dark</p>
       <div class="end-stats" id="death-stats">Time survived  0m 00s</div>
-      <button class="retry-btn" id="btn-retry">Try again</button>
+      <div class="end-actions"><button class="retry-btn" id="btn-retry">New house</button><button class="retry-btn ghost" id="btn-retry-same">Same seed</button></div>
     </div>
   </div>
 
-  <!-- Victory -->
-  <div class="end-modal" id="victory-modal">
+  <div class="end-modal modal" id="victory-modal">
     <div class="end-card">
       <h1 class="end-title win-title">You escaped</h1>
       <p class="end-subtitle">The skull is out of the manor and you made it before midnight</p>
       <div class="end-stats" id="win-stats">Escape time  0m 00s</div>
-      <button class="retry-btn" id="btn-play-again">Play again</button>
+      <div class="end-actions"><button class="retry-btn" id="btn-play-again">Play again</button></div>
     </div>
   </div>
 
+  <script src="core.js"></script>
+  <script src="world-data.js"></script>
+  <script src="audio.js"></script>
+  <script src="items.js"></script>
+  <script src="interact.js"></script>
+  <script src="textures.js"></script>
+  <script src="world.js"></script>
+  <script src="doors.js"></script>
+  <script src="spots.js"></script>
+  <script src="hiding.js"></script>
+  <script src="rooms.js"></script>
+  <script src="decor.js"></script>
+  <script src="ghost.js"></script>
+  <script src="ghost-ai.js"></script>
+  <script src="jumpscares.js"></script>
+  <script src="director.js"></script>
+  <script src="hud.js"></script>
+  <script src="debug.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
