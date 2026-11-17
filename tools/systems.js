@@ -23,6 +23,12 @@ const srv = http.createServer((req, res) => {
   });
   const T = async (name, fn, arg) => { try { const r = await page.evaluate(fn, arg); console.log(name.padEnd(28), JSON.stringify(r)); return r; } catch (e) { console.log(name.padEnd(28), 'THREW', e.message.slice(0, 300)); } };
 
+  await T('story opening radio', () => {
+    const g = __game, seen = []; g.story.start();
+    for (let t = 0; t < 14; t += 0.1) { g.step(0.1); const r = document.getElementById('radio'); if (r.classList.contains('on')) { const s = r.querySelector('.who').textContent + ': ' + r.querySelector('.txt').textContent; if (!seen.includes(s)) seen.push(s); } }
+    return { lines: seen, clock: document.getElementById('hud-clock').textContent };
+  });
+  await page.evaluate(() => { __game.hud.clearRadio(); });
   await T('ghost roams 6 min', () => {
     const g = __game, gh = g.ghost; gh.aiEnabled = true; gh.dormantT = 0; g.debug.teleport('corridor'); gh.updateSight = function () { this.sees = false; }; gh.hear = function () {}; g.god = true; g.fear.update = function () {};
     const rooms = {}, states = {}; let maxStuck = 0, last = '', stuck = 0;

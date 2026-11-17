@@ -6,8 +6,8 @@ const vm = require('vm');
 const root = path.join(__dirname, '..');
 const ctx = { console, module: { exports: {} } };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(path.join(root, 'core.js'), 'utf8') + '\nthis.RNG = RNG;', ctx);
-vm.runInContext(fs.readFileSync(path.join(root, 'world-data.js'), 'utf8') + '\nthis.WD = WORLD_DATA;', ctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'src/core/core.js'), 'utf8') + '\nthis.RNG = RNG;', ctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'src/data/world-data.js'), 'utf8') + '\nthis.WD = WORLD_DATA;', ctx);
 const { RNG, WD } = ctx;
 
 let fails = 0, repeats = 0, spots = new Set(), relicRooms = {};

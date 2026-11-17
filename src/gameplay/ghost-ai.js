@@ -45,7 +45,12 @@ Object.assign(Ghost.prototype, {
   },
 
   inPlayerRoom() { return this.roomId === this.game.currentRoom; },
-  setState(s) { if (this.state === s) return; this.state = s; this.stateT = 0; this.onState(s); },
+  setState(s) {
+    if (this.state === s) return;
+    // leaving a hiding-place check: release the spot so it can be checked again later
+    if (this.checking && s !== 'SEARCH') { this.checking.spot.ghostHere = false; this.checking = null; }
+    this.state = s; this.stateT = 0; this.onState(s);
+  },
   onState(s) {
     const g = this.game;
     if (s === 'HUNT') { g.audio.setChase(true); this.formTarget = 2; this.eyeColor.setHex(0xff2a2a); this.P.arms = 0.7; }
@@ -101,12 +106,15 @@ Object.assign(Ghost.prototype, {
     this.checking = null; this.setState('HUNT');
     this.game.audio.roar(); this.game.fear.add(18);
     this.game.hud.alert('It has seen you');
+    this.game.story.onHunt();
     this.path = []; this.routeDoors = [];
   },
 
   // ---- hearing ---------------------------------------------------------------
   hear(n) {
     if (this.state === 'DORMANT' || this.state === 'STUNNED' || this.state === 'REPELLED' || this.scripted) return;
+    // busy at a hiding place: what you hear from in there is judged by the hiding rules instead
+    if (this.checking && this.state === 'SEARCH') return;
     const cfg = this.cfg, range = CONFIG.hearRange * n.loud * cfg.hearing * (this.safeT > 0 ? 0.5 : 1) * (1 + this.game.stage * 0.08);
     let eff = -1;
     if (n.room === this.roomId) eff = range - dist2D(n.x, n.z, this.x, this.z);
@@ -361,6 +369,7 @@ Object.assign(Ghost.prototype, {
   // ---- SEARCH: looks around, then checks hiding places -----------------------------
   beginSearch(sec) {
     this.setState('SEARCH'); this.searchT = sec; this.checking = null; this.checksLeft = 2 + Math.floor(Math.random() * 2);
+    this.dwellT = 0;   // a stale patrol pause must not stop it checking hiding places
     if (this.lastKnown) this.goTo(this.lastKnown.room, this.lastKnown.x, this.lastKnown.z);
     this.game.audio.setChase(false);
   },

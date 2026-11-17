@@ -38,6 +38,8 @@ class HorrorGame {
     this.screenFX = new ScreenFX(this);
     this.atmosphere = new Atmosphere(this);
     this.director = new ScareDirector(this);
+    this.story = new StoryDirector(this);
+    this.intro = new StoryIntro(this);
     this.ghost = new Ghost(this);
     this.initHardware();
     this.initMenu();
@@ -272,6 +274,7 @@ class HorrorGame {
     if (playing) {
       this.updateMovement(dt);
       this.updateStage();
+      this.story.update(dt); this.updateClock();
       this.interact.update(dt);
       this.hiding.update(dt);
       this.updateLooseItems(dt);
@@ -309,6 +312,22 @@ class HorrorGame {
     this.bpmT = (this.bpmT || 0) - dt;
     if (this.bpmT <= 0) { this.bpmT = 1.1; document.getElementById('hud-bpm').textContent = Math.round(66 + this.fear.v * 0.95 + Math.random() * 4) + ' bpm'; }
     document.getElementById('fear-fill').style.width = this.fear.v.toFixed(0) + '%';
+  }
+
+  // Called from the Begin / Skip click, so pointer lock is allowed here
+  beginPlaying() {
+    this.isPlaying = true; this.clockT = 0;
+    this.audio.startAmbience(); this.container.requestPointerLock();
+    document.getElementById('hud-layer').classList.add('live');
+    this.story.start();
+  }
+
+  // In-game clock: 1 real minute = 2 game minutes, starting at 11:14 PM on Oct 31
+  gameMinutes() { return 14 + this.clockT / 30; }
+  updateClock() {
+    const m = Math.floor(this.gameMinutes()), total = 23 * 60 + m, day = total >= 1440, mm = total % 1440, h24 = Math.floor(mm / 60), min = mm % 60;
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    this.hud.setClock((day ? 'Nov 1 1998 ' : 'Oct 31 1998 ') + h12 + ':' + String(min).padStart(2, '0') + (h24 >= 12 ? ' PM' : ' AM'));
   }
 
   // ------------------------------------------------------------------------
@@ -356,6 +375,7 @@ class HorrorGame {
       arrivalDoor.snap(true); arrivalDoor.autoClose = true;
     }
     if (prev && prev !== room) this.ghost.onPlayerRoomChange(prev.id, roomId);
+    if (this.isPlaying && prev !== room) this.story.onRoom(roomId);
     this.updateObjective();
     if (room.trap && !room.trapDone && arrivalDoor && this.isPlaying) this.fireTrap(room, arrivalDoor);
     this.hud.renderInventory();
@@ -422,6 +442,7 @@ class HorrorGame {
   // Events from the interaction layer
   // ------------------------------------------------------------------------
   onDoorUnlocked(door, key) {
+    if (door.def.slot === 'crypt') this.story.onGateUnlocked();
     this.unlocked.add(door.def.slot); this.inventory.removeItem(key);
     this.makeNoise(door.bx, door.bz, door.room.id, 0.3, 'unlock'); this.updateObjective();
   }
@@ -437,6 +458,7 @@ class HorrorGame {
   }
   onItemPickedUp(wi) {
     const it = wi.item, g = this;
+    this.story.onPickup(it);
     this.looseItems = this.looseItems.filter(x => x !== wi);
     this.updateObjective();
     if (it.def.mimic === 'key') {
@@ -451,7 +473,7 @@ class HorrorGame {
   }
   triggerVictory() {
     if (this.hasWon) return;
-    this.hasWon = true; this.audio.setChase(false); this.audio.stopAmbience(3); document.exitPointerLock();
+    this.hasWon = true; this.story.onEscaped(); this.audio.setChase(false); this.audio.stopAmbience(3); document.exitPointerLock();
     this.hud.fade(true, 900);
     this.tweens.after(1.0, () => {
       document.getElementById('win-stats').textContent = 'Escape time  ' + this.formatElapsed() + '\nSeed  ' + this.seed;
@@ -459,6 +481,7 @@ class HorrorGame {
     });
   }
   showDeath(type) {
+    this.story.onDeath();
     this.audio.setChase(false); this.audio.stopAmbience(1.5); document.exitPointerLock();
     const lines = DEATH_TEXT[type] || DEATH_TEXT.ghost;
     document.getElementById('death-sub').textContent = lines[Math.floor(Math.random() * lines.length)];
@@ -474,7 +497,7 @@ class HorrorGame {
     this.prevLayout = sameSeed ? null : this.prevLayout;
     this.newRun(seed);
     this.isPlaying = true; this.hud.blackout(false); this.hud.fade(false, 100);
-    this.audio.startAmbience(); this.container.requestPointerLock();
+    this.audio.startAmbience(); this.container.requestPointerLock(); this.hud.clearRadio(); this.story.start();
     this.tweens.after(0.1, () => { this.clock.getDelta(); });
   }
 
@@ -626,9 +649,9 @@ class HorrorGame {
       this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked };
       const typed = $('menu-seed').value.trim().toUpperCase();
       if (typed && typed !== this.seed) this.newRun(typed); else this.ghost.reset();
-      this.hud.hideModal($('start-menu')); this.isPlaying = true; this.clockT = 0;
-      this.audio.startAmbience(); this.container.requestPointerLock();
-      document.getElementById('hud-layer').classList.add('live');
+      this.hud.hideModal($('start-menu'));
+      // first play: the full story, no skip. Later plays: same story with a Skip button.
+      if (this.testMode) this.beginPlaying(); else this.intro.play(() => this.beginPlaying());
     });
     $('btn-retry').addEventListener('click', () => this.restart(false));
     $('btn-retry-same').addEventListener('click', () => this.restart(true));

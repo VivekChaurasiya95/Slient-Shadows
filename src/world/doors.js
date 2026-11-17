@@ -173,6 +173,7 @@ class Door extends Openable {
     }
     // key lock: the selected key, else any key that fits
     const keys = g.inventory.keys();
+    if (this.def.id === 'c_crypt') g.story.onGateLocked();
     if (!keys.length) { g.audio.rattle(pos); g.hud.toast('Locked. You need a key'); g.makeNoise(this.bx, this.bz, this.room.id, 0.3, 'rattle'); return; }
     const sel = g.inventory.current;
     let key = sel && sel.def.kind === 'key' ? sel : null;

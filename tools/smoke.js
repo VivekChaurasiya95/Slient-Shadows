@@ -14,6 +14,7 @@ const srv = http.createServer((req, res) => {
   const errs = [];
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 400)); });
   page.on('pageerror', e => errs.push('PAGEERR ' + e.message + '\n' + (e.stack || '').split('\n').slice(0, 4).join('\n')));
+  page.on('response', r => { if (r.status() === 404) console.log('404:', r.url()); });
   await page.goto('http://localhost:8765/');
   await page.waitForTimeout(4000);
   const out = path.join(process.env.TEMP, 'pwtest') + path.sep;

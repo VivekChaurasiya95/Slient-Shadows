@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
-  <script src="assets/three.min.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="lib/three.min.js"></script>
 </head>
 <body class="game-body">
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -25,7 +25,8 @@
     <canvas class="fx-grain" id="fx-grain" width="160" height="90"></canvas>
     <div id="hide-overlay"></div>
 
-    <div class="vhs-timestamp" id="hud-timestamp"><span class="rec-dot"></span>Oct 31 1998 03:14<span id="hud-seed" class="seed"></span></div>
+    <div class="vhs-timestamp" id="hud-timestamp"><span class="rec-dot"></span><span id="hud-clock">Oct 31 1998 11:14 PM</span><span id="hud-seed" class="seed"></span></div>
+    <div id="radio"><span class="who"></span><span class="txt"></span></div>
     <div class="reticle" id="reticle"></div>
     <div class="hold-ring" id="hold-ring"></div>
     <div class="interact-prompt" id="interact-prompt"><kbd>E</kbd><span id="prompt-text"></span></div>
@@ -69,6 +70,21 @@
     <div class="jumpscare-overlay" id="jumpscare-overlay"></div>
     <div id="flash"></div>
     <div id="fade"></div>
+  </div>
+
+  <div id="story-modal" class="modal">
+    <div class="story-bg"></div>
+    <div class="story-card">
+      <div id="story-dots"></div>
+      <div class="story-stage"><canvas id="story-canvas" width="680" height="300"></canvas></div>
+      <p id="story-kicker"></p>
+      <div id="story-body"></div>
+      <div class="story-actions">
+        <button id="story-skip" class="story-skip" type="button">Skip story</button>
+        <span id="story-hint"></span>
+        <button id="story-next" class="play-btn story-next" type="button" disabled>Continue</button>
+      </div>
+    </div>
   </div>
 
   <div id="note-modal" class="modal"><div class="paper"><p id="note-text"></p><small>Press E to put it away</small></div></div>
@@ -126,24 +142,27 @@
     </div>
   </div>
 
-  <script src="core.js"></script>
-  <script src="world-data.js"></script>
-  <script src="audio.js"></script>
-  <script src="items.js"></script>
-  <script src="interact.js"></script>
-  <script src="textures.js"></script>
-  <script src="world.js"></script>
-  <script src="doors.js"></script>
-  <script src="spots.js"></script>
-  <script src="hiding.js"></script>
-  <script src="rooms.js"></script>
-  <script src="decor.js"></script>
-  <script src="ghost.js"></script>
-  <script src="ghost-ai.js"></script>
-  <script src="jumpscares.js"></script>
-  <script src="director.js"></script>
-  <script src="hud.js"></script>
-  <script src="debug.js"></script>
-  <script src="game.js"></script>
+  <script src="src/core/core.js"></script>
+  <script src="src/data/world-data.js"></script>
+  <script src="src/audio/audio.js"></script>
+  <script src="src/gameplay/items.js"></script>
+  <script src="src/gameplay/interact.js"></script>
+  <script src="src/world/textures.js"></script>
+  <script src="src/world/world.js"></script>
+  <script src="src/world/doors.js"></script>
+  <script src="src/world/spots.js"></script>
+  <script src="src/gameplay/hiding.js"></script>
+  <script src="src/world/rooms.js"></script>
+  <script src="src/world/decor.js"></script>
+  <script src="src/gameplay/ghost.js"></script>
+  <script src="src/gameplay/ghost-ai.js"></script>
+  <script src="src/gameplay/jumpscares.js"></script>
+  <script src="src/gameplay/director.js"></script>
+  <script src="src/story/cinematic.js"></script>
+  <script src="src/story/cinematic-scenes.js"></script>
+  <script src="src/story/story.js"></script>
+  <script src="src/ui/hud.js"></script>
+  <script src="src/ui/debug.js"></script>
+  <script src="src/game.js"></script>
 </body>
 </html>

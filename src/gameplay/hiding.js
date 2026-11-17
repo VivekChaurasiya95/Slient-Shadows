@@ -167,6 +167,7 @@ class Hiding {
           this.savedFlash = g.flashlightOn; g.setFlashlight(false);
           g.hud.setHidden(true); g.audio.breathe(0.12);
           g.audio.say('[You hold still]');
+          g.story.onHide();
           if (spot.fake) this.startTrap(spot);
         }, 'cl');
         g.audio.doorClose(0.5, { x: spot.x, y: 1, z: spot.z });
