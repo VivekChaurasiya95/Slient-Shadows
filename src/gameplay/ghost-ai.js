@@ -22,7 +22,7 @@ Object.assign(Ghost.prototype, {
     this.dwellT = 0; this.burstT = 0; this.openT = 0; this.lookT = 0; this.repathT = 0;
     this.checking = null; this.checksLeft = 0; this.safeT = 0;
     this.entering = 0; this.dormantT = 0; this.sinceNear = 0; this.lastNoise = null;
-    this.speedMul = 1;
+    this.speedMul = 1; this.huntT = 0; this.resist = 0;
   },
 
   reset(roomId) {
@@ -32,14 +32,14 @@ Object.assign(Ghost.prototype, {
     const cfg = this.game.cfg;
     this.dormantT = cfg.label === 'Easy' ? 40 : cfg.label === 'Nightmare' ? 14 : 24;
     const rooms = ['parlor', 'kitchen', 'library', 'bedroom'].filter(r => this.game.world.rooms[r].role !== 'safe');
-    const r = roomId || rooms[Math.floor(Math.random() * rooms.length)] || 'parlor';
+    const r = roomId || rooms[Math.floor(this.game.rand() * rooms.length)] || 'parlor';
     this.spawnIn(r);
   },
 
   spawnIn(roomId) {
     const room = this.game.world.rooms[roomId], pts = room.waypoints, pl = this.game.camera.position;
     let best = pts[0] || { x: room.cx, z: room.cz };
-    pts.forEach(p => { if (Math.random() < 0.35 || !best) best = p; });
+    pts.forEach(p => { if (this.game.rand() < 0.35 || !best) best = p; });
     this.roomId = roomId; this.place(best.x, best.z, 0);
     this.path = []; this.routeDoors = [];
   },
@@ -53,7 +53,7 @@ Object.assign(Ghost.prototype, {
   },
   onState(s) {
     const g = this.game;
-    if (s === 'HUNT') { g.audio.setChase(true); this.formTarget = 2; this.eyeColor.setHex(0xff2a2a); this.P.arms = 0.7; }
+    if (s === 'HUNT') { this.huntT = 0; g.audio.setChase(true); this.formTarget = 2; this.eyeColor.setHex(0xff2a2a); this.P.arms = 0.7; }
     else {
       if (this.state !== 'STUNNED') g.audio.setChase(false);
       this.eyeColor.setHex(s === 'SUSPICIOUS' || s === 'SEARCH' ? 0xffb050 : 0xa8e8ff);
@@ -115,7 +115,7 @@ Object.assign(Ghost.prototype, {
     if (this.state === 'DORMANT' || this.state === 'STUNNED' || this.state === 'REPELLED' || this.scripted) return;
     // busy at a hiding place: what you hear from in there is judged by the hiding rules instead
     if (this.checking && this.state === 'SEARCH') return;
-    const cfg = this.cfg, range = CONFIG.hearRange * n.loud * cfg.hearing * (this.safeT > 0 ? 0.5 : 1) * (1 + this.game.stage * 0.08);
+    const cfg = this.cfg, range = CONFIG.hearRange * n.loud * cfg.hearing * (this.safeT > 0 ? 0.5 : 1) * (1 + this.game.stage * 0.08) * (this.game.midnight ? CONFIG.midnight.hearing : 1);
     let eff = -1;
     if (n.room === this.roomId) eff = range - dist2D(n.x, n.z, this.x, this.z);
     else {
@@ -128,7 +128,7 @@ Object.assign(Ghost.prototype, {
     }
     if (eff <= 0) return;
     this.lastNoise = { room: n.room, x: n.x, z: n.z, t: this.game.clockT, loud: n.loud, type: n.type };
-    this.P.headTilt = 0.35 * (Math.random() < 0.5 ? -1 : 1);
+    this.P.headTilt = 0.35 * (this.game.rand() < 0.5 ? -1 : 1);
     if (this.state === 'HUNT') { this.lastKnown = { room: n.room, x: n.x, z: n.z, t: this.game.clockT }; return; }
     if (n.loud >= 0.7 && eff > range * 0.25) { this.lastKnown = { room: n.room, x: n.x, z: n.z, t: this.game.clockT }; this.startHunt(); return; }
     this.lastKnown = { room: n.room, x: n.x, z: n.z, t: this.game.clockT };
@@ -235,8 +235,11 @@ Object.assign(Ghost.prototype, {
     this.animate(dt);
     if (!this.aiEnabled || this.scripted || g.isDead || g.hasWon) return;
     this.stateT += dt; this.stunCd -= dt; this.safeT -= dt;
+    this.resist = Math.max(0, this.resist - dt * CONFIG.beam.resistDecay);
     this.sinceNear = this.distToPlayer() < 9 ? 0 : this.sinceNear + dt;
-    const stage = g.stage, speedMul = 1 + stage * 0.07;
+    const stage = g.stage, speedMul = (1 + stage * 0.07) * (g.midnight ? CONFIG.midnight.speed : 1);
+    // after midnight the house tells her roughly where you are, every minute or so
+    if (g.midnight) this.senseHouse(dt);
 
     if (this.state === 'DORMANT') { this.dormantT -= dt; if (this.dormantT <= 0 && g.isPlaying) { this.setState('PATROL'); this.dwellT = 0; } return; }
     this.updateSight(dt);
@@ -256,14 +259,38 @@ Object.assign(Ghost.prototype, {
     if (this.inPlayerRoom() && !g.hiding.active && this.state === 'HUNT' && this.distToPlayer() < 1.15 && this.room.lineClear(this.x, this.z, this.px(), this.pz(), 0.1)) g.scares.death('ghost');
   },
 
+  // Midnight rule: she feels you. Not an instant hunt, but she comes to where you were.
+  // Hiding unseen still protects you.
+  senseHouse(dt) {
+    const g = this.game;
+    this.senseT = (this.senseT === undefined ? 20 : this.senseT) - dt;
+    if (this.senseT > 0) return;
+    this.senseT = 65 + g.rand() * 30;
+    if (g.hiding.active || this.scripted || (this.state !== 'PATROL' && this.state !== 'SEARCH' && this.state !== 'SUSPICIOUS')) return;
+    this.lastKnown = { room: g.currentRoom, x: this.px(), z: this.pz(), t: g.clockT };
+    this.setState('SUSPICIOUS'); this.dwellT = 0; this.goTo(g.currentRoom, this.px(), this.pz());
+    g.hud.toast('Something turns toward you'); g.fear.add(6);
+  },
+
   // Flashlight stun: aim the beam at it within 9m, with line of sight
   checkFlashlight() {
     const g = this.game;
-    if (!g.flashlightOn || g.battery <= 0 || !this.group.visible || this.stunCd > 0 || this.state === 'STUNNED' || this.state === 'DORMANT') return;
+    // the beam only has the strength to stun while the battery can pay for it
+    if (!g.flashlightOn || g.battery < CONFIG.beam.cost || !this.group.visible || this.stunCd > 0 || this.state === 'STUNNED' || this.state === 'DORMANT') return;
     if (this.distToPlayer() > 9) return;
     const d = TMP.v1.set(this.x - g.camera.position.x, 1.5 - g.camera.position.y, this.z - g.camera.position.z).normalize();
     const f = TMP.v2.set(0, 0, -1).applyQuaternion(g.camera.quaternion);
-    if (f.dot(d) > 0.94 && this.room.lineClear(this.x, this.z, this.px(), this.pz(), 0.1)) this.stun(this.cfg.stun);
+    if (f.dot(d) > 0.94 && this.room.lineClear(this.x, this.z, this.px(), this.pz(), 0.1)) this.beamStun();
+  },
+
+  // A stun from the flashlight burns battery, and each one makes the next weaker
+  beamStun() {
+    const g = this.game, B = CONFIG.beam;
+    g.battery = Math.max(0, g.battery - B.cost); g.hud.setBattery(g.battery);
+    const dur = Math.max(B.minStun, this.cfg.stun * (1 - this.resist));
+    this.resist = Math.min(B.resistMax, this.resist + B.resistGain);
+    g.hud.toast(g.battery < B.cost ? 'The beam is nearly spent' : 'The beam burns through the battery');
+    this.stun(dur);
   },
 
   stun(sec) {
@@ -305,8 +332,8 @@ Object.assign(Ghost.prototype, {
     if (!reach.length) return null;
     // the longer it has been since it was near you, the more it drifts toward your room
     const bias = clamp(this.sinceNear / 45, 0, 1) * 0.65 * this.cfg.aggression;
-    const target = Math.random() < bias ? (reach.find(r => r.id === g.currentRoom) || reach[0]) : reach[Math.floor(Math.random() * reach.length)];
-    const pts = target.waypoints, p = pts[Math.floor(Math.random() * pts.length)] || { x: target.cx, z: target.cz };
+    const target = this.game.rand() < bias ? (reach.find(r => r.id === g.currentRoom) || reach[0]) : reach[Math.floor(this.game.rand() * reach.length)];
+    const pts = target.waypoints, p = pts[Math.floor(this.game.rand() * pts.length)] || { x: target.cx, z: target.cz };
     return { room: target.id, x: p.x, z: p.z };
   },
   tickPatrol(dt, speed) {
@@ -324,9 +351,9 @@ Object.assign(Ghost.prototype, {
     }
     const r = this.followRoute(dt, speed);
     if (r === 'arrived' || r === 'failed') {
-      this.goal = null; this.dwellT = 2 + Math.random() * 3.5;
+      this.goal = null; this.dwellT = 2 + this.game.rand() * 3.5;
       // now and then it rummages through a drawer, which you can hear from the next room
-      if (this.inPlayerRoom() && Math.random() < 0.45) {
+      if (this.inPlayerRoom() && this.game.rand() < 0.45) {
         const near = this.room.spots.filter(s => s.ia && s.ia.setT && !s.ia.isOpen && dist2D(s.def.x, s.def.z, this.x, this.z) < 4)[0];
         if (near) { near.ia.open(false, true); }
       }
@@ -342,7 +369,7 @@ Object.assign(Ghost.prototype, {
       return;
     }
     const r = this.followRoute(dt, speed);
-    if (r === 'arrived') this.dwellT = 3 + Math.random() * 2;
+    if (r === 'arrived') this.dwellT = 3 + this.game.rand() * 2;
     else if (r === 'failed') this.beginSearch(5);
     if (this.stateT > 30) this.setState('PATROL');
   },
@@ -352,7 +379,10 @@ Object.assign(Ghost.prototype, {
     const g = this.game;
     this.formTarget = 2; this.P.arms = this.sees ? 0.9 : 0.5;
     this.repathT -= dt;
-    const speed = this.cfg.hunt * (1 + g.stage * 0.05);
+    this.huntT += dt;
+    const ramp = 1 + clamp(this.huntT / CONFIG.chase.huntRamp, 0, 1) * CONFIG.chase.maxBoost;
+    const speed = this.cfg.hunt * (1 + g.stage * 0.05) * ramp * (g.midnight ? CONFIG.midnight.speed : 1);
+    this.huntSpeedNow = speed;
     const lk = this.lastKnown;
     if (!lk) { this.beginSearch(8); return; }
     if (this.inPlayerRoom() && this.sees) {
@@ -368,7 +398,7 @@ Object.assign(Ghost.prototype, {
 
   // ---- SEARCH: looks around, then checks hiding places -----------------------------
   beginSearch(sec) {
-    this.setState('SEARCH'); this.searchT = sec; this.checking = null; this.checksLeft = 2 + Math.floor(Math.random() * 2);
+    this.setState('SEARCH'); this.searchT = sec; this.checking = null; this.checksLeft = 2 + Math.floor(this.game.rand() * 2);
     this.dwellT = 0;   // a stale patrol pause must not stop it checking hiding places
     if (this.lastKnown) this.goTo(this.lastKnown.room, this.lastKnown.x, this.lastKnown.z);
     this.game.audio.setChase(false);
@@ -389,7 +419,7 @@ Object.assign(Ghost.prototype, {
     const c = this.checking, spot = c.spot, h = this.game.hiding;
     c.t += dt;
     if (c.phase === 'walk') {
-      if (this.moveAlong(dt, speed) || dist2D(this.x, this.z, spot.front.x, spot.front.z) < 0.5) { c.phase = 'sniff'; c.t = 0; c.dur = 2.4 + Math.random() * 1.8; this.yaw = Math.atan2(spot.x - this.x, spot.z - this.z); spot.ghostHere = true; }
+      if (this.moveAlong(dt, speed) || dist2D(this.x, this.z, spot.front.x, spot.front.z) < 0.5) { c.phase = 'sniff'; c.t = 0; c.dur = 2.4 + this.game.rand() * 1.8; this.yaw = Math.atan2(spot.x - this.x, spot.z - this.z); spot.ghostHere = true; }
       return;
     }
     if (c.phase === 'sniff') {

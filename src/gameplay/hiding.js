@@ -200,7 +200,7 @@ class Hiding {
     const want = !!(this.active && !this.busy && g.keys.Space);
     if (this.exhausted && this.stamina > 0.3) this.exhausted = false;
     this.holding = want && !this.exhausted && this.stamina > 0;
-    if (this.holding) { this.stamina -= dt * 0.22; if (this.stamina <= 0) { this.stamina = 0; this.exhausted = true; this.holding = false; this.gaspT = 0.7; g.audio.gasp(); g.makeNoise(this.active.x, this.active.z, g.currentRoom, 0.35, 'gasp'); } }
+    if (this.holding) { this.stamina -= dt * 0.22 * (1 + g.fear.level * CONFIG.fear.breathDrain); if (this.stamina <= 0) { this.stamina = 0; this.exhausted = true; this.holding = false; this.gaspT = 0.7; g.audio.gasp(); g.makeNoise(this.active.x, this.active.z, g.currentRoom, 0.35, 'gasp'); } }
     else this.stamina = Math.min(1, this.stamina + dt * (this.exhausted ? 0.1 : 0.16));
     g.hud.setBreath(this.stamina, !!this.active, this.exhausted);
     if (!this.active) { this.peekLoose = 0; return; }
@@ -212,7 +212,7 @@ class Hiding {
     if (this.peekActive && this.peekSpot === this.active) {
       this.peekT += dt;
       const n = this.noise();
-      if (n > 0.18 || (!this.holding && Math.random() < dt * g.cfg.peekKill * 0.45)) { this.foundBy(this.peekGhost, this.peekSpot); return; }
+      if (n > 0.18 || (!this.holding && g.frand() < dt * g.cfg.peekKill * 0.45)) { this.foundBy(this.peekGhost, this.peekSpot); return; }
     }
     // fake spot: the thing already inside with you
     if (this.trapT > 0) {
@@ -234,7 +234,7 @@ class Hiding {
       if (this.active === h) w += 1.1 * (ghost.lastNoise && ghost.game.clockT - ghost.lastNoise.t < 15 ? 2 : 1);
       if (h.fake) w *= 0.6;
       return w;
-    });
+    }, ghost.game.rand.bind(ghost.game));
   }
 
   startPeek(ghost, spot) {
@@ -265,9 +265,9 @@ class Hiding {
 }
 
 // weighted pick helper
-function RNGPick(list, wfn) {
+function RNGPick(list, wfn, rand) {
   let total = 0; const w = list.map(x => { const v = Math.max(0.01, wfn(x)); total += v; return v; });
-  let r = Math.random() * total;
+  let r = (rand ? rand() : Math.random()) * total;
   for (let i = 0; i < list.length; i++) { r -= w[i]; if (r <= 0) return list[i]; }
   return list[list.length - 1];
 }

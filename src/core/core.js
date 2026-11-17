@@ -13,14 +13,25 @@ const CONFIG = {
     normal:    { label: 'Normal',    walk: 1.75, hunt: 4.1, hearing: 1.0,  sight: 14, aggression: 1.0,  fearGain: 1.0,  scareRate: 1.0,  stun: 2.0, peekKill: 0.55, drain: 1.0 },
     nightmare: { label: 'Nightmare', walk: 2.1,  hunt: 4.9, hearing: 1.3,  sight: 17, aggression: 1.5,  fearGain: 1.3,  scareRate: 1.35, stun: 1.3, peekKill: 0.8,  drain: 1.35 }
   },
-  player: { walk: 3.4, sprint: 5.8, crouch: 1.7, radius: 0.35, eye: 1.7, crouchEye: 1.1, fov: 72, sprintFov: 78 },
+  // Sprint costs stamina: about 5 seconds at full speed, then you are winded until it refills
+  player: { walk: 3.4, sprint: 5.8, crouch: 1.7, radius: 0.35, eye: 1.7, crouchEye: 1.1, fov: 72, sprintFov: 78, sprintDrain: 0.2, sprintRegen: 0.13, sprintDelay: 1.4, sprintMin: 0.3 },
+  // A chase speeds up: after huntRamp seconds in HUNT the ghost is up to +50% faster
+  chase: { huntRamp: 30, maxBoost: 0.5 },
+  // The flashlight beam burns battery per stun, and the ghost builds resistance to it
+  beam: { cost: 12, resistGain: 0.25, resistDecay: 0.012, resistMax: 0.8, minStun: 0.5 },
+  // The night: real seconds of play until midnight and until dawn. 11:14 PM -> 6:00 AM.
+  night: { midnightAt: 900, dawnAt: 2400 },
+  // After midnight the house stops forgiving
+  midnight: { speed: 1.12, hearing: 1.25, battery: 1.4 },
+  // High fear bends the rules (0..1 fear): shorter breath hold, a lying noise meter, fake door sounds
+  fear: { breathDrain: 1.3, lieAt: 0.55, fakeSoundAt: 0.55 },
   // base hearing range in metres for a noise of loudness 1.0
   hearRange: 14,
   loudness: { walk: 0.22, sprint: 0.85, doorFast: 0.55, doorSlow: 0.08, drop: 0.6, thrown: 0.85, pickup: 0.08, slam: 1.0 },
   micThreshold: 35,
   micThresholdHidden: 18,
   interact: { reach: 2.9, holdSlow: 0.28 },
-  stageSeconds: [150, 330, 540],
+  stageSeconds: [225, 540, 900],   // 25%, 60% and 100% of the way to midnight
   inventorySlots: 6
 };
 

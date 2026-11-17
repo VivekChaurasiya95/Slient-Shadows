@@ -50,6 +50,7 @@
 
     <div class="hud-controls-status">
       <div class="stance-indicator" id="stance-indicator">Standing</div>
+      <div class="battery-status"><span>Stamina</span><div class="battery-bar"><div class="battery-fill stam" id="sprint-fill"></div></div></div>
       <div class="battery-status"><span>Flashlight <kbd>F</kbd></span><div class="battery-bar"><div class="battery-fill" id="battery-fill"></div></div></div>
     </div>
 
@@ -87,6 +88,15 @@
     </div>
   </div>
 
+  <div class="end-modal modal" id="pause-modal">
+    <div class="end-card">
+      <h1 class="end-title">Paused</h1>
+      <p class="end-subtitle" id="pause-sub">Nothing moves while you are away</p>
+      <div class="end-stats" id="pause-stats"></div>
+      <div class="end-actions"><button class="retry-btn" id="btn-resume">Resume</button><button class="retry-btn ghost" id="btn-pause-restart">New house</button></div>
+    </div>
+  </div>
+
   <div id="note-modal" class="modal"><div class="paper"><p id="note-text"></p><small>Press E to put it away</small></div></div>
 
   <div class="menu-modal modal visible" id="start-menu" style="display:flex">
@@ -105,19 +115,19 @@
         </div>
         <div class="menu-mic-preview"><label>Microphone level</label><div class="menu-meter-track"><div class="menu-meter-fill" id="menu-mic-fill"></div></div></div>
         <div class="opts">
-          <label class="opt"><span>Seed</span><input id="menu-seed" type="text" maxlength="12" placeholder="random" autocomplete="off" spellcheck="false"></label>
+          <label class="opt"><span>Seed <button id="menu-daily" class="linkbtn" type="button">use today's</button></span><input id="menu-seed" type="text" maxlength="12" placeholder="random" autocomplete="off" spellcheck="false"></label>
           <label class="opt"><span>Difficulty</span><select id="menu-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="nightmare">Nightmare</option></select></label>
           <label class="chk"><input id="menu-flash" type="checkbox"><span>Reduce flashing</span></label>
           <label class="chk"><input id="menu-scares" type="checkbox"><span>Reduce scares</span></label>
           <label class="chk"><input id="menu-subs" type="checkbox" checked><span>Subtitles for sounds</span></label>
         </div>
         <dl class="controls-guide">
-          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move, <kbd>Shift</kbd> sprint (loud), <kbd>C</kbd> crouch</dd></div>
+          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move, <kbd>Shift</kbd> sprint (loud, costs stamina), <kbd>C</kbd> crouch</dd></div>
           <div><dt><kbd>E</kbd></dt><dd>Interact. Tap a door to open it fast, hold for slow and quiet</dd></div>
           <div><dt><kbd>1</kbd>-<kbd>6</kbd></dt><dd>Select item, <kbd>R</kbd> use, <kbd>Q</kbd> drop, <kbd>Shift</kbd>+<kbd>Q</kbd> throw</dd></div>
           <div><dt><kbd>Tab</kbd></dt><dd>Inventory, notes and map, <kbd>F</kbd> flashlight</dd></div>
           <div><dt><kbd>Space</kbd></dt><dd>Hold your breath while hidden</dd></div>
-          <div><dt>Hide</dt><dd>Look at a wardrobe, bed, curtain or coffin and press <kbd>E</kbd></dd></div>
+          <div><dt>Hide</dt><dd>Look at a wardrobe, bed, curtain or coffin and press <kbd>E</kbd>. <kbd>Esc</kbd> pauses</dd></div>
         </dl>
         <button id="btn-play-game" class="play-btn">Enter the house</button>
       </div>

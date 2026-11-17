@@ -82,6 +82,7 @@ class HUD {
   flash(a) { const f = this.el.flash; f.style.opacity = a; setTimeout(() => { f.style.opacity = 0; }, 90); }
   blackout(on) { this.el.fade.classList.toggle('black', on); }
   fade(on, ms) { const f = this.el.fade; f.style.transitionDuration = (ms || 300) + 'ms'; f.classList.toggle('on', on); }
+  setSprint(v, winded) { const f = document.getElementById('sprint-fill'); f.style.width = (clamp(v, 0, 1) * 100).toFixed(0) + '%'; f.classList.toggle('low', winded); }
   setBattery(p) { this.el.battery.style.width = clamp(p, 0, 100) + '%'; this.el.battery.classList.toggle('low', p < 20); }
 
   // ---- modals ------------------------------------------------------------------

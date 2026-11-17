@@ -10,7 +10,8 @@ const DEATH_TEXT = {
   trap: ['The hiding place was not empty'],
   ceiling: ['It was above you the whole time'],
   corridor: ['It was never far behind'],
-  exit: ['So close to the door']
+  exit: ['So close to the door'],
+  dawn: ['The sun rose. The house let you go. Nothing was settled']
 };
 
 class Jumpscares {
@@ -31,7 +32,7 @@ class Jumpscares {
     // never leave it standing where the player can see it pop out of a scare
     if (relocate !== false) {
       const far = ['parlor', 'kitchen', 'library', 'bedroom', 'corridor'].filter(r => r !== g.currentRoom && g.world.rooms[r].role !== 'safe');
-      gh.spawnIn(far[Math.floor(Math.random() * far.length)] || s.room);
+      gh.spawnIn(far[Math.floor(g.rand() * far.length)] || s.room);
       gh.state = 'NONE'; gh.setState('PATROL');
       if (s.state === 'DORMANT') { gh.state = 'DORMANT'; gh.dormantT = s.dormantT; }
     } else { gh.roomId = s.room; gh.place(s.x, s.z, gh.yaw); }
@@ -211,7 +212,7 @@ Object.assign(Jumpscares.prototype, {
   // ---- 6. Fake-outs: harmless events with a soft, metallic sting -----------------------------------
   fakeout(kind) {
     const g = this.game, room = g.room, p = g.camera.position;
-    kind = kind || ['bat', 'painting', 'door', 'chair'][Math.floor(Math.random() * 4)];
+    kind = kind || ['bat', 'painting', 'door', 'chair'][Math.floor(g.rand() * 4)];
     const f = TMP.v1.set(0, 0, -1).applyQuaternion(g.camera.quaternion); f.y = 0; f.normalize();
     if (kind === 'bat') this.batSwarm(room, p.x - f.x * 3, p.z - f.z * 3, f.x, f.z, 14);
     else if (kind === 'painting') {

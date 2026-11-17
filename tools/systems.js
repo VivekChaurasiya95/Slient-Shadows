@@ -68,7 +68,7 @@ const srv = http.createServer((req, res) => {
       const entered = h.active === spot;
       // the ghost arrives and checks every hiding place in the room
       gh.aiEnabled = true; gh.roomId = rid; gh.state = 'NONE'; gh.spawnIn(rid); gh.lastKnown = { room: rid, x: spot.x, z: spot.z, t: g.clockT };
-      gh.setState('SEARCH'); gh.searchT = 30; gh.checksLeft = 4; gh.path = []; gh.goal = null; spot.burnedUntil = 0; spot.compromised = false;
+      gh.beginSearch(30); gh.checksLeft = 4; gh.path = []; gh.goal = null; spot.burnedUntil = 0; spot.compromised = false;
       let peeked = false, found = false, t = 0;
       for (; t < 90; t += 0.05) {
         g.keys.Space = quiet; if (!quiet && t > 6) g.keys.KeyW = true;

@@ -215,3 +215,9 @@ body.is-hidden #hide-cue.on { opacity: 1; }
 #story-body p { font-size: 17px; line-height: 1.55; }
 #story-body p.radio { font-size: 15px; }
 @media (max-height: 760px) { #story-body { min-height: 120px; } #story-body p { font-size: 15px; } }
+
+.battery-fill.stam { background: var(--safe); transition: width 0.1s linear, background-color 0.2s; } .battery-fill.stam.low { background: var(--danger); }
+
+#pause-modal { z-index: 130; background: rgba(8,7,6,0.88); }
+
+.linkbtn { margin-left: 8px; padding: 0; background: none; border: 0; color: var(--accent); font: 12px var(--font-ui); cursor: pointer; text-decoration: underline; } .linkbtn:hover { color: #f0a255; }

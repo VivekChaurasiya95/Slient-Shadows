@@ -178,8 +178,6 @@ class StoryDirector {
     this.corridorStillT = (g.currentRoom === 'corridor' && !moved) ? this.corridorStillT + dt : 0;
     if (this.corridorStillT > 60 && this.once('R02')) this.forceSay('R02');
     if (this.idleT > 300) { this.idleT = 0; this.forceSay('R26'); }
-    // Midnight: the clock tolls once the in-game hour is up
-    if (g.gameMinutes() >= 60 && !this.midnight) { this.midnight = true; this.midnightToll(); }
   }
 
   midnightToll() {

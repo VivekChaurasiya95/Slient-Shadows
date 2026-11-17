@@ -21,9 +21,9 @@ class FearSystem {
     if (gh.state === 'HUNT') d += 5 * g.cfg.fearGain;
     this.v = clamp(this.v + d * dt, 0, 100);
     // at high fear: hallucinations, harmless and clearly not the ghost
-    if (this.v > 55 && !g.access.reduceScares) {
+    if (this.v > CONFIG.fear.fakeSoundAt * 100 && !g.access.reduceScares) {
       this.hallT -= dt;
-      if (this.hallT <= 0) { this.hallT = 14 + Math.random() * 18; g.director.hallucinate(); }
+      if (this.hallT <= 0) { this.hallT = 14 + g.rand() * 18; g.director.hallucinate(); }
     }
   }
 }
@@ -61,7 +61,7 @@ class Atmosphere {
     this.winMat = null;
     this.phantom = null;
   }
-  reset() { this.flickerT = 0; this.outT = 0; this.lightningT = 20 + Math.random() * 30; this.phantomClear(); }
+  reset() { this.flickerT = 0; this.outT = 0; this.lightningT = 20 + this.game.rand() * 30; this.phantomClear(); }
 
   lightsOut(sec) { this.outT = Math.max(this.outT, sec); }
   flicker(sec) { this.flickerT = Math.max(this.flickerT, sec); }
@@ -87,7 +87,7 @@ class Atmosphere {
     g.flashFlicker = (fear > 0.6 ? (fear - 0.6) * 2.5 : 0) + (g.battery < 15 ? (15 - g.battery) / 15 : 0);
     // lightning
     this.lightningT -= dt;
-    if (this.lightningT <= 0) { this.lightningT = Math.max(14, (45 - g.stage * 8)) * (0.6 + Math.random() * 0.9); this.lightning(); }
+    if (this.lightningT <= 0) { this.lightningT = Math.max(14, (45 - g.stage * 8)) * (0.6 + g.rand() * 0.9); this.lightning(); }
     if (this.flash.intensity > 0) { this.flash.intensity = Math.max(0, this.flash.intensity - dt * 22); }
     // window view brightness
     const wm = g.world.windowMat(); wm.color.setScalar(clamp(wm.color.r + (1 - wm.color.r) * Math.min(1, dt * 7), 1, 6));
@@ -109,7 +109,7 @@ class Atmosphere {
       wm.color.setScalar(soft ? 2 : 5);
       if (room.windows.length) { const w = room.windows[0]; this.flash.position.set(w.x, 2.4, w.z + (w.z < 0 ? 1 : w.z > 0 ? -1 : 0)); this.flash.intensity = soft ? 2.5 : 7; }
     });
-    g.tweens.after(0.7 + Math.random() * 1.6, () => g.audio.thunder());
+    g.tweens.after(0.7 + g.rand() * 1.6, () => g.audio.thunder());
   }
 
   puff() {
@@ -163,14 +163,14 @@ class ScareDirector {
     this.quiet += dt; this.cool -= dt;
     if (this.pendingReal > 0) { this.pendingReal -= dt; if (this.pendingReal <= 0) this.real(); }
     if (g.hiding.active || g.ghost.state === 'HUNT' || g.scares.busy || g.inputLocked) return;
-    if (this.cool > 0 || this.quiet < this.interval() * (0.7 + Math.random() * 0.6)) return;
+    if (this.cool > 0 || this.quiet < this.interval() * (0.7 + g.rand() * 0.6)) return;
     this.fire();
   }
   fire() {
     const g = this.game, st = g.stage, ev = [];
     const add = (name, w, f) => ev.push({ name, w, f });
-    add('flicker', 3, () => g.flickerLights(1.6 + Math.random() * 1.5));
-    add('blackout', 1.6 + st, () => g.lightsOut(3 + Math.random() * 3));
+    add('flicker', 3, () => g.flickerLights(1.6 + g.rand() * 1.5));
+    add('blackout', 1.6 + st, () => g.lightsOut(3 + g.rand() * 3));
     add('slam', 2, () => this.distantSlam());
     add('musicbox', 1.5, () => g.audio.musicBox(g.audio.randPos(7), 0.3, false));
     add('footsteps', 2, () => this.overhead());
@@ -186,14 +186,14 @@ class ScareDirector {
       add('corridor', g.currentRoom === 'corridor' && st >= 2 ? 3 : 0, () => g.scares.corridor(false));
       add('ceiling', st >= 2 && g.currentRoom !== 'corridor' ? 2.5 : 0, () => g.scares.ceiling(false));
     }
-    const pick = new RNG(String(Math.random())).weighted(ev, e => e.w);
+    const pick = g.rng.weighted(ev, e => e.w);
     if (!pick || pick.w <= 0) return;
     const big = ['mirror', 'corridor', 'ceiling'].includes(pick.name);
     pick.f();
     if (big) this.lastBig = g.time;
     this.quiet = 0; this.cool = big ? 18 : 8;
     // lower the guard with a fake-out, then something real a few seconds later
-    if (['chair', 'painting', 'bats'].includes(pick.name) && st >= 1 && !g.access.reduceScares && Math.random() < 0.5) this.pendingReal = 4 + Math.random() * 5;
+    if (['chair', 'painting', 'bats'].includes(pick.name) && st >= 1 && !g.access.reduceScares && g.rand() < 0.5) this.pendingReal = 4 + g.rand() * 5;
   }
   real() {
     const g = this.game;
@@ -206,7 +206,7 @@ class ScareDirector {
   behind() { const g = this.game, f = TMP.v1.set(0, 0, 1).applyQuaternion(g.camera.quaternion); return { x: g.camera.position.x + f.x * 1.2, y: 1.5, z: g.camera.position.z + f.z * 1.2 }; }
   distantSlam() {
     const g = this.game, others = Object.values(g.world.rooms).filter(r => r.id !== g.currentRoom);
-    const r = others[Math.floor(Math.random() * others.length)];
+    const r = others[Math.floor(g.rand() * others.length)];
     const d = r.doors[0];
     g.audio.doorSlam(d ? { x: d.bx, y: 1.2, z: d.bz } : null);
     g.fear.add(6);
@@ -219,9 +219,19 @@ class ScareDirector {
     g.audio.whisper(null, 0.4); g.fear.add(6);
   }
   hallucinate() {
-    const g = this.game, k = Math.floor(Math.random() * 3);
+    const g = this.game, k = Math.floor(g.rand() * 4);
     if (k === 0) g.atmosphere.spawnPhantom();
     else if (k === 1) { g.audio.doorSlam({ x: g.camera.position.x + 6, y: 1, z: g.camera.position.z - 6 }); g.audio.say('[A door slams somewhere]'); }
-    else g.audio.whisper(this.behind(), 0.6);
+    else if (k === 2) g.audio.whisper(this.behind(), 0.6);
+    else this.fakeDoor();
+  }
+  // A door creaks open that nobody opened. Nothing is there. It only makes you want to hide.
+  fakeDoor() {
+    const g = this.game, doors = g.room.doors.filter(d => d.def.kind !== 'fake' && !d.isOpen);
+    if (!doors.length) { g.audio.whisper(this.behind(), 0.5); return; }
+    const d = doors[Math.floor(g.rand() * doors.length)], pos = { x: d.bx, y: 1.2, z: d.bz };
+    g.audio.doorOpen(0.35, pos); g.audio.footstep(g.room.def.floor, 0.8, pos);
+    g.tweens.after(0.9, () => g.audio.footstep(g.room.def.floor, 0.8, pos)); g.tweens.after(1.7, () => g.audio.footstep(g.room.def.floor, 0.8, pos));
+    g.fear.add(5);
   }
 }
