@@ -10,14 +10,14 @@ const WORLD_DATA = (() => {
   // Rooms
   // ------------------------------------------------------------------------
   const ROOMS = {
-    corridor: { id: 'corridor', name: 'Corridor', bounds: { minX: -2, maxX: 2, minZ: -12, maxZ: 12 }, H: 3.4, floor: 'wood',  fog: [0x0a0708, 0.06],  ambient: [0x545a70, 0.42], wet: 0.25 },
-    parlor:   { id: 'parlor',   name: 'Parlor',   bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.4, floor: 'wood',  fog: [0x0c0504, 0.055], ambient: [0x8a4a30, 0.5],  wet: 0.2 },
-    bedroom:  { id: 'bedroom',  name: 'Bedroom',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.4, floor: 'wood',  fog: [0x05070d, 0.06],  ambient: [0x4a5f98, 0.55], wet: 0.15 },
-    kitchen:  { id: 'kitchen',  name: 'Kitchen',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.2, floor: 'stone', fog: [0x0a0904, 0.06],  ambient: [0x6a6a40, 0.45], wet: 0.3 },
-    library:  { id: 'library',  name: 'Library',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.6, floor: 'wood',  fog: [0x080604, 0.055], ambient: [0x6a5030, 0.45], wet: 0.12 },
-    nursery:  { id: 'nursery',  name: 'Nursery',  bounds: { minX: -4, maxX: 4, minZ: -5, maxZ: 5 },   H: 3.0, floor: 'wood',  fog: [0x0b0710, 0.06],  ambient: [0x6a4a8a, 0.5],  wet: 0.15 },
+    corridor: { id: 'corridor', name: 'Corridor', bounds: { minX: -2, maxX: 2, minZ: -12, maxZ: 12 }, H: 3.4, floor: 'wood',  fog: [0x0a0708, 0.06],  ambient: [0x3c4050, 0.42], wet: 0.25 },
+    parlor:   { id: 'parlor',   name: 'Parlor',   bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.4, floor: 'wood',  fog: [0x0c0504, 0.055], ambient: [0x4a3c34, 0.45],  wet: 0.2 },
+    bedroom:  { id: 'bedroom',  name: 'Bedroom',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.4, floor: 'wood',  fog: [0x05070d, 0.06],  ambient: [0x384056, 0.5], wet: 0.15 },
+    kitchen:  { id: 'kitchen',  name: 'Kitchen',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.2, floor: 'stone', fog: [0x0a0904, 0.06],  ambient: [0x46463a, 0.42], wet: 0.3 },
+    library:  { id: 'library',  name: 'Library',  bounds: { minX: -5, maxX: 5, minZ: -6, maxZ: 6 },   H: 3.6, floor: 'wood',  fog: [0x080604, 0.055], ambient: [0x484034, 0.42], wet: 0.12 },
+    nursery:  { id: 'nursery',  name: 'Nursery',  bounds: { minX: -4, maxX: 4, minZ: -5, maxZ: 5 },   H: 3.0, floor: 'wood',  fog: [0x0b0710, 0.06],  ambient: [0x444058, 0.45],  wet: 0.15 },
     cellar:   { id: 'cellar',   name: 'Cellar',   bounds: { minX: -5, maxX: 5, minZ: -5, maxZ: 5 },   H: 2.8, floor: 'stone', fog: [0x050605, 0.09],  ambient: [0x3a4a3a, 0.4],  wet: 0.5 },
-    crypt:    { id: 'crypt',    name: 'Crypt',    bounds: { minX: -5, maxX: 5, minZ: -8, maxZ: 6 },   H: 3.8, floor: 'stone', fog: [0x040c07, 0.085], ambient: [0x2c6a48, 0.5],  wet: 0.7 }
+    crypt:    { id: 'crypt',    name: 'Crypt',    bounds: { minX: -5, maxX: 5, minZ: -8, maxZ: 6 },   H: 3.8, floor: 'stone', fog: [0x040c07, 0.085], ambient: [0x2c4a3c, 0.45],  wet: 0.7 }
   };
   const ROOM_IDS = Object.keys(ROOMS);
 

@@ -56,9 +56,53 @@ const STORY = {
     T08: [['ROWAN', 'This isn\u2019t an artifact. It\u2019s a grave.']],
     T10: [['ROWAN', 'Don\u2019t breathe. Don\u2019t breathe.']],
     T11: [['ROWAN', 'Okay. Okay. Keep moving.']],
-    R26: [['DACRE', 'Hello? Is the feed live? \u2026Rowan?']]
+    R26: [['DACRE', 'Hello? Is the feed live? \u2026Rowan?']],
+    // The narrator tells the story of the house as Rowan moves through it (spoken aloud)
+    N01: [['NARRATOR', 'Forty-seven years of dust lay in the hall. No one had walked it since. No one living.']],
+    N02: [['NARRATOR', 'In the parlor the Hollows once sat by the fire. The ash in the grate was still warm.']],
+    N03: [['NARRATOR', 'Mrs. Pell kept this kitchen to the very end. Some say she never left it.']],
+    N04: [['NARRATOR', 'Josiah\u2019s books were all about doors. How to open them. How to close them. How to keep something behind them.']],
+    N05: [['NARRATOR', 'Thomas slept here, twelve years old, and heard every scream that came up from the crypt.']],
+    N06: [['NARRATOR', 'The cellar was cold in a way that had nothing to do with the weather.']],
+    N07: [['NARRATOR', 'The candles in the crypt had never gone out. Elspeth was down here, and she was listening.']],
+    N08: [['NARRATOR', 'The skull was warm in Rowan\u2019s hands. It should not have been warm.']],
+    N09: [['NARRATOR', 'Far off, deep in the house, something stirred. It knew the skull was gone.']],
+    N10: [['NARRATOR', 'A step on the stairs. Then another. She did not hurry. She did not need to.']],
+    N11: [['NARRATOR', 'The air turned colder. She was close now, and getting closer.']],
+    N12: [['NARRATOR', 'One by one, the lights began to die.']],
+    N13: [['NARRATOR', 'And then Rowan heard her breathing, right behind.']]
   }
 };
+
+// --------------------------------------------------------------------------
+// Voice narration (browser speech synthesis). Deep narrator, calm radio fixer, shaky Rowan.
+// --------------------------------------------------------------------------
+const Narrator = {
+  enabled: true,
+  profiles: { NARRATOR: { rate: 0.8, pitch: 0.5, vol: 1 }, DACRE: { rate: 0.88, pitch: 0.75, vol: 0.9 }, ROWAN: { rate: 0.95, pitch: 1.0, vol: 0.85 } },
+  ok() { return this.enabled && typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined'; },
+  voice(who) {
+    const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+    if (!vs.length) return null;
+    const male = vs.filter(v => /david|daniel|alex|james|george|mark|male|fred|ryan|guy|thomas/i.test(v.name));
+    const female = vs.filter(v => /zira|samantha|susan|hazel|female|karen|moira|aria|jenny/i.test(v.name));
+    const pool = who === 'ROWAN' ? (female.length ? female : vs) : (male.length ? male : vs);
+    return pool[0];
+  },
+  speak(text, who, interrupt) {
+    if (!this.ok()) return;
+    const p = this.profiles[who] || this.profiles.NARRATOR;
+    if (interrupt) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/\u2026/g, '...'));
+    u.rate = p.rate; u.pitch = p.pitch; u.volume = p.vol;
+    const v = this.voice(who); if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  },
+  stop() { if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel(); },
+  // rough speaking time in ms for pacing
+  ms(text) { return this.ok() ? text.length * 78 + 500 : 0; }
+};
+if (typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices) speechSynthesis.getVoices();
 
 // --------------------------------------------------------------------------
 // Opening sequence
@@ -114,9 +158,12 @@ class StoryIntro {
     // paragraphs fade in one after another
     Array.from(e.body.children).forEach((p, k) => { p.style.transitionDelay = (0.5 + k * 1.1) + 's'; });
     requestAnimationFrame(() => requestAnimationFrame(() => e.body.classList.add('in')));
-    if (c.cinematic) { g.audio.static(); c.cinematic.forEach((l, k) => { if (l[0] === 'DACRE') g.tweens.after(0.5 + k * 1.1, () => g.audio.static(), 'story-static' + k); }); }
+    // voice narration, one paragraph after another
+    Narrator.enabled = !!g.access.narration; Narrator.stop();
+    if (!c.cinematic) c.lines.forEach(t => Narrator.speak(t, 'NARRATOR'));
     // minimum reading time so the first play cannot be clicked through
-    const wait = Math.min(14, 2.5 + chars * 0.045) + (c.lines ? c.lines.length * 0.4 : 1.5);
+    let wait = Math.min(14, 2.5 + chars * 0.045) + (c.lines ? c.lines.length * 0.4 : 1.5);
+    if (Narrator.ok()) wait = Math.max(wait, Math.min(40, chars * 0.078 + 1.5 + Array.from(e.body.children).length * 0.5));
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { this.canNext = true; e.next.disabled = false; e.next.classList.add('ready'); }, wait * 1000);
   }
@@ -130,7 +177,7 @@ class StoryIntro {
 
   finish(completed) {
     if (!this.active) return;
-    this.active = false; clearTimeout(this.timer); this.cine.stop();
+    this.active = false; clearTimeout(this.timer); this.cine.stop(); Narrator.stop();
     // only mark as seen when it was played to the end (or skipped after already seen)
     if (completed || !this.first) StoryIntro.markSeen();
     this.game.hud.hideModal(this.el.modal);
@@ -157,6 +204,7 @@ class StoryDirector {
       g.audio.doorSlam({ x: 0, y: 1.3, z: 12 }); g.audio.rattle({ x: 0, y: 1.0, z: 12 }); g.cameraShake(0.3); g.flickerLights(0.8); g.fear.add(6);
       g.tweens.after(0.9, () => this.forceSay('S002'));
     }, 'story-open');
+    g.tweens.after(11, () => this.say('N01'), 'story-n1');
     g.tweens.after(22, () => this.say('S003a'), 'story-t1');
     g.tweens.after(40, () => this.say('S003b'), 'story-t2');
   }
@@ -188,6 +236,8 @@ class StoryDirector {
 
   onRoom(id) {
     const g = this.game; if (!this.started) return;
+    const nar = { parlor: 'N02', kitchen: 'N03', library: 'N04', nursery: 'N05', cellar: 'N06', crypt: 'N07' }[id];
+    if (nar && !g.ghost.relicChase) g.tweens.after(3.5, () => this.say(nar), 'story-nar');
     if (id === 'bedroom') this.say('R03'); else if (id === 'parlor') this.say('R04'); else if (id === 'library') this.say('R10');
     else if (id === 'cellar') this.say('R13'); else if (id === 'crypt') this.say('R15');
     else if (id === 'nursery' && this.once('R12')) g.tweens.after(4, () => g.hud.say(STORY.lines.R12), 'story-r12');
@@ -199,7 +249,7 @@ class StoryDirector {
     if (k === 'key' && ++this.keyCount === 1) this.say('R05');
     else if (k === 'note') { this.noteCount++; if (this.noteCount === 1) this.say('R06'); else if (this.noteCount === 2) this.say('R07'); }
     else if (it.id === 'locket') this.say('R08'); else if (it.id === 'musicbox') this.say('R09');
-    else if (it.id === 'relic') { this.game.tweens.after(1.6, () => { this.say('T08'); this.game.audio.static(); this.game.tweens.after(3.5, () => this.say('R16')); }); }
+    else if (it.id === 'relic') { this.game.tweens.after(1.6, () => { this.say('N08'); this.say('T08'); this.game.tweens.after(3.5, () => this.say('R16')); }); }
   }
   onHide() { this.say('T10'); }
   onHunt() { if (this.game.hasRelic) this.say('R17'); }

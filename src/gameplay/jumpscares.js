@@ -255,7 +255,7 @@ Object.assign(Jumpscares.prototype, {
     g.tweens.after(1.1, () => g.audio.roar());
     g.audio.whisper(null, 0.6);
     const gh = g.ghost; gh.lastKnown = { room: g.currentRoom, x: g.camera.position.x, z: g.camera.position.z, t: g.clockT };
-    gh.state = 'NONE'; gh.dormantT = 0; gh.spawnIn(g.currentRoom === 'corridor' ? 'parlor' : 'corridor'); gh.setState('HUNT'); gh.goTo(g.currentRoom, gh.lastKnown.x, gh.lastKnown.z);
+    gh.beginRelicChase();
     g.hud.setObjective('Run to the front door');
   },
 

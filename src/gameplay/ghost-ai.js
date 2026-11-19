@@ -23,6 +23,71 @@ Object.assign(Ghost.prototype, {
     this.checking = null; this.checksLeft = 0; this.safeT = 0;
     this.entering = 0; this.dormantT = 0; this.sinceNear = 0; this.lastNoise = null;
     this.speedMul = 1; this.huntT = 0; this.resist = 0;
+    this.relicChase = false; this.relicT = 0; this.relicPhase = 0; this.relicFlags = {}; this.relicPulseT = 0;
+  },
+
+  // ---- skull chase: a quiet grace period, then she closes in step by step ----------
+  // phase 0: house wakes, ghost is far away and cannot sense you (time to run)
+  // phase 1: she starts coming, tracking your last position in pulses that get faster
+  // phase 2: full hunt
+  beginRelicChase() {
+    const g = this.game, W = WORLD_DATA;
+    this.relicChase = true; this.relicT = 0; this.relicPhase = 0; this.relicFlags = {}; this.relicPulseT = 0;
+    // start in the room farthest from the player
+    let far = null, best = -1;
+    Object.keys(g.world.rooms).forEach(id => {
+      if (id === g.currentRoom || g.world.rooms[id].role === 'safe') return;
+      const p = W.roomPath(id, g.currentRoom, g.unlocked); if (p && p.length > best) { best = p.length; far = id; }
+    });
+    this.state = 'NONE'; this.spawnIn(far || (g.currentRoom === 'corridor' ? 'parlor' : 'corridor'));
+    this.setState('DORMANT'); this.dormantT = 999;
+  },
+  tickRelicChase(dt) {
+    const g = this.game, R = CONFIG.relicChase, F = this.relicFlags, T = (this.relicT += dt);
+    const beat = (k, at, fn) => { if (T >= at && !F[k]) { F[k] = true; fn(); } };
+    if (this.relicPhase === 0) {
+      this.dormantT = 999;
+      beat('b1', 5, () => { g.audio.whisper(null, 0.5); });
+      beat('b2', 11, () => { g.audio.growl(null); g.hud.toast('Far away, something is moving'); g.story.say('N09'); });
+      beat('b3', 19, () => { g.audio.thud(null, 0.8); g.flickerLights(1.2); g.fear.add(8); });
+      beat('b4', 27, () => { g.audio.whisper(null, 0.8); g.story.say('N10'); });
+      if (T >= R.grace || this.state !== 'DORMANT') {
+        this.relicPhase = 1; this.relicPulseT = 0;
+        if (this.state === 'DORMANT') {
+          g.audio.roar(); g.hud.alert('It is coming'); g.fear.add(12);
+          this.lastKnown = { room: g.currentRoom, x: this.px(), z: this.pz(), t: g.clockT };
+          this.setState('SUSPICIOUS'); this.dwellT = 0; this.goTo(g.currentRoom, this.px(), this.pz());
+        }
+      }
+      return;
+    }
+    if (this.relicPhase === 1) {
+      beat('c1', R.grace + 14, () => g.story.say('N11'));
+      beat('c2', R.grace + 30, () => { g.flickerLights(1.5); g.story.say('N12'); });
+      const k = clamp((T - R.grace) / (R.hunt - R.grace), 0, 1);
+      this.relicPulseT -= dt;
+      if (this.relicPulseT <= 0 && !g.hiding.active && (this.state === 'PATROL' || this.state === 'SEARCH' || this.state === 'SUSPICIOUS')) {
+        this.relicPulseT = R.pulseSlow + (R.pulseFast - R.pulseSlow) * k;
+        this.lastKnown = { room: g.currentRoom, x: this.px(), z: this.pz(), t: g.clockT };
+        if (this.state !== 'SUSPICIOUS') this.setState('SUSPICIOUS');
+        this.dwellT = 0; this.goTo(g.currentRoom, this.px(), this.pz());
+      }
+      if (T >= R.hunt) {
+        this.relicPhase = 2;
+        if (!g.hiding.active && this.state !== 'HUNT' && this.state !== 'STUNNED' && this.state !== 'REPELLED') {
+          this.lastKnown = { room: g.currentRoom, x: this.px(), z: this.pz(), t: g.clockT };
+          g.story.say('N13'); this.startHunt();
+        }
+      }
+      return;
+    }
+    // phase 2: if she loses you, she keeps pulling toward you instead of giving up for long
+    this.relicPulseT -= dt;
+    if (this.relicPulseT <= 0 && !g.hiding.active && (this.state === 'PATROL' || this.state === 'SEARCH')) {
+      this.relicPulseT = R.pulseFast;
+      this.lastKnown = { room: g.currentRoom, x: this.px(), z: this.pz(), t: g.clockT };
+      this.startHunt();
+    }
   },
 
   reset(roomId) {
@@ -58,7 +123,7 @@ Object.assign(Ghost.prototype, {
       if (this.state !== 'STUNNED') g.audio.setChase(false);
       this.eyeColor.setHex(s === 'SUSPICIOUS' || s === 'SEARCH' ? 0xffb050 : 0xa8e8ff);
       if (s !== 'STUNNED') this.P.arms = 0;
-      this.formTarget = (s === 'PATROL' || s === 'DORMANT') ? 0.55 : 1;
+      this.formTarget = (s === 'PATROL' || s === 'DORMANT') ? 0.85 : 1.2; if (s !== 'STUNNED' && s !== 'REPELLED') { this.P.crawl = 0; this.P.jaw = 0; this.P.scream = 0; }
     }
   },
 
@@ -241,6 +306,7 @@ Object.assign(Ghost.prototype, {
     // after midnight the house tells her roughly where you are, every minute or so
     if (g.midnight) this.senseHouse(dt);
 
+    if (this.relicChase) this.tickRelicChase(dt);
     if (this.state === 'DORMANT') { this.dormantT -= dt; if (this.dormantT <= 0 && g.isPlaying) { this.setState('PATROL'); this.dwellT = 0; } return; }
     this.updateSight(dt);
     this.checkFlashlight();
@@ -377,7 +443,9 @@ Object.assign(Ghost.prototype, {
   // ---- HUNT -------------------------------------------------------------------
   tickHunt(dt) {
     const g = this.game;
-    this.formTarget = 2; this.P.arms = this.sees ? 0.9 : 0.5;
+    this.formTarget = 2; this.P.arms = this.sees ? 0.65 : 0.35;
+    // when it sees you the jaw drops open and the head cocks
+    this.P.jaw = this.sees ? 1 : 0.35; this.P.headTilt = this.sees ? 0.45 : this.P.headTilt;
     this.repathT -= dt;
     this.huntT += dt;
     const ramp = 1 + clamp(this.huntT / CONFIG.chase.huntRamp, 0, 1) * CONFIG.chase.maxBoost;

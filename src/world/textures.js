@@ -39,6 +39,11 @@ class TextureLab {
         g.fillStyle = 'rgba(0,0,0,0.65)'; g.fillRect(i * w, 0, 2, s); g.fillRect(i * w, Math.random() * s, w, 2);
       }
       this.stains(g, s, 8, 0.28); this.speckle(g, s, 1400, 0.25);
+      // a grey film of dust, scuffs and a few rotten, broken boards
+      g.fillStyle = 'rgba(70,66,58,0.22)'; g.fillRect(0, 0, s, s);
+      this.speckle(g, s, 3000, 0.18, true);
+      for (let i = 0; i < 3; i++) { const bx = Math.floor(Math.random() * n) * w, by = Math.random() * s * 0.8, bl = 40 + Math.random() * 80; g.fillStyle = 'rgba(0,0,0,0.9)'; g.fillRect(bx + 3, by, w - 6, bl); g.fillStyle = 'rgba(40,28,18,0.8)'; for (let k = 0; k < 5; k++) g.fillRect(bx + 3 + Math.random() * (w - 10), by + Math.random() * bl, 4, 10); }
+      this.stains(g, s, 6, 0.35);
     });
   }
   stone() {
@@ -71,6 +76,7 @@ class TextureLab {
       g.fillStyle = '#17140f'; g.fillRect(0, 0, s, s); this.stains(g, s, 10, 0.4); this.speckle(g, s, 1500, 0.25, true);
       g.strokeStyle = 'rgba(0,0,0,0.5)';
       for (let i = 0; i < 4; i++) { g.beginPath(); let x = Math.random() * s, y = Math.random() * s; g.moveTo(x, y); for (let k = 0; k < 6; k++) { x += Math.random() * 30 - 15; y += Math.random() * 30; g.lineTo(x, y); } g.stroke(); }
+      this.decay(g, s, s);
     });
   }
   door() {
@@ -107,6 +113,54 @@ class TextureLab {
       g.fillStyle = 'hsl(' + p[0] + ',' + p[1] + '%,' + (p[2] + 5) + '%)'; g.fillRect(0, top - 4, s, 8);
       const gb = g.createLinearGradient(0, s - 70, 0, s); gb.addColorStop(0, 'rgba(0,0,0,0)'); gb.addColorStop(1, 'rgba(0,0,0,0.6)'); g.fillStyle = gb; g.fillRect(0, s - 70, s, 70);
       this.speckle(g, s, 2200, 0.22);
+      this.decay(g, s, top);
+    });
+  }
+  // Decades of neglect: water running down from the ceiling, black mould, holes in the plaster
+  decay(g, s, top) {
+    for (let i = 0; i < 14; i++) {
+      const x = Math.random() * s, w = 6 + Math.random() * 26, len = top * (0.3 + Math.random() * 0.7);
+      const gr = g.createLinearGradient(0, 0, 0, len); gr.addColorStop(0, 'rgba(20,16,8,0.6)'); gr.addColorStop(1, 'rgba(20,16,8,0)');
+      g.fillStyle = gr; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + w, 0); g.lineTo(x + w * 0.6, len); g.lineTo(x + w * 0.3, len * 0.9); g.fill();
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = Math.random() * s, y = Math.random() < 0.5 ? Math.random() * 60 : top - Math.random() * 80;
+      for (let k = 0; k < 40; k++) { const r = 2 + Math.random() * 9; g.fillStyle = 'rgba(' + (8 + Math.random() * 14) + ',' + (14 + Math.random() * 14) + ',8,' + (0.25 + Math.random() * 0.4) + ')'; g.beginPath(); g.arc(x + (Math.random() - 0.5) * 70, y + (Math.random() - 0.5) * 40, r, 0, 7); g.fill(); }
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = 40 + Math.random() * (s - 80), y = 40 + Math.random() * (top - 120), r = 16 + Math.random() * 26;
+      g.fillStyle = 'rgba(50,44,36,0.9)'; g.beginPath(); for (let a = 0; a < 9; a++) { const an = a / 9 * 6.283, rr = r * (0.6 + Math.random() * 0.5); g.lineTo(x + Math.cos(an) * rr * 1.2, y + Math.sin(an) * rr); } g.fill();
+      g.fillStyle = 'rgba(0,0,0,0.85)'; for (let k = 0; k < 4; k++) g.fillRect(x - r * 0.9, y - r * 0.6 + k * r * 0.35, r * 1.8, r * 0.16);
+    }
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, 0, s, s);
+  }
+  // Scrawled writing for walls
+  scrawl(text) {
+    return this.make('tex.scrawl.' + text, 256, (g, s) => {
+      g.clearRect(0, 0, s, s); g.font = 'bold 44px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      const words = text.split('|');
+      words.forEach((w, i) => {
+        const y = s / 2 + (i - (words.length - 1) / 2) * 56;
+        g.save(); g.translate(s / 2, y); g.rotate((Math.random() - 0.5) * 0.12);
+        g.fillStyle = 'rgba(90,6,6,0.9)'; g.fillText(w, 0, 0);
+        g.restore();
+        for (let k = 0; k < 10; k++) { g.fillStyle = 'rgba(80,5,5,0.8)'; g.fillRect(s * 0.15 + Math.random() * s * 0.7, y + 14, 2 + Math.random() * 2, 10 + Math.random() * 40); }
+      });
+    });
+  }
+  // Soft dark blot for dirt on floors and damp on walls
+  blot() {
+    return this.make('tex.blot', 128, (g, s) => {
+      g.clearRect(0, 0, s, s);
+      for (let i = 0; i < 9; i++) { const x = s / 2 + (Math.random() - 0.5) * s * 0.4, y = s / 2 + (Math.random() - 0.5) * s * 0.4, r = s * (0.18 + Math.random() * 0.25), gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(12,10,6,0.55)'); gr.addColorStop(1, 'rgba(12,10,6,0)'); g.fillStyle = gr; g.fillRect(0, 0, s, s); }
+    });
+  }
+  // Torn paper / old letters on the floor
+  scrap() {
+    return this.make('tex.scrap', 64, (g, s) => {
+      g.clearRect(0, 0, s, s); g.fillStyle = '#8a8066'; g.beginPath(); g.moveTo(6, 8); g.lineTo(58, 4); g.lineTo(52, 30); g.lineTo(60, 58); g.lineTo(10, 54); g.lineTo(4, 30); g.fill();
+      g.strokeStyle = 'rgba(30,25,15,0.6)'; for (let y = 14; y < 50; y += 6) { g.beginPath(); g.moveTo(12, y); g.lineTo(48, y + 1); g.stroke(); }
+      this.stains(g, s, 2, 0.5);
     });
   }
   // --- decals and small art (alpha) ---
@@ -156,7 +210,11 @@ class TextureLab {
       g.fillStyle = 'rgba(70,52,40,0.95)'; g.fillRect(s * 0.24, s * 0.62, s * 0.52, s * 0.4);
       g.fillStyle = 'rgba(176,160,134,0.92)'; g.beginPath(); g.ellipse(s / 2, s * 0.36, s * 0.17, s * 0.22, 0, 0, 7); g.fill();
       g.fillStyle = 'rgba(30,20,16,0.8)'; g.fillRect(s * 0.42, s * 0.5, s * 0.16, 2); g.fillRect(s * 0.47, s * 0.4, 2, s * 0.08);
-      this.speckle(g, s, 300, 0.4);
+      // someone scratched the face out
+      g.strokeStyle = 'rgba(8,4,4,0.85)'; g.lineWidth = 2;
+      for (let i = 0; i < 26; i++) { g.beginPath(); g.moveTo(s * (0.34 + Math.random() * 0.32), s * (0.16 + Math.random() * 0.4)); g.lineTo(s * (0.34 + Math.random() * 0.32), s * (0.16 + Math.random() * 0.4)); g.stroke(); }
+      g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(0, 0, s, s);
+      this.stains(g, s, 3, 0.5); this.speckle(g, s, 300, 0.4);
     });
   }
   faces(variant) {

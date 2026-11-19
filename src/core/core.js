@@ -17,6 +17,8 @@ const CONFIG = {
   player: { walk: 3.4, sprint: 5.8, crouch: 1.7, radius: 0.35, eye: 1.7, crouchEye: 1.1, fov: 72, sprintFov: 78, sprintDrain: 0.2, sprintRegen: 0.13, sprintDelay: 1.4, sprintMin: 0.3 },
   // A chase speeds up: after huntRamp seconds in HUNT the ghost is up to +50% faster
   chase: { huntRamp: 30, maxBoost: 0.5 },
+  // After the skull is taken: seconds of calm, then seconds until the full hunt, and how often she homes in on you
+  relicChase: { grace: 35, hunt: 85, pulseSlow: 15, pulseFast: 6 },
   // The flashlight beam burns battery per stun, and the ghost builds resistance to it
   beam: { cost: 12, resistGain: 0.25, resistDecay: 0.012, resistMax: 0.8, minStun: 0.5 },
   // The night: real seconds of play until midnight and until dawn. 11:14 PM -> 6:00 AM.

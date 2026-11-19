@@ -36,15 +36,19 @@ class HUD {
     if (!item) { this.radioBusy = false; r.classList.remove('on'); return; }
     this.radioBusy = true;
     r.classList.toggle('rowan', item.who === 'ROWAN');
-    r.querySelector('.who').textContent = item.who === 'ROWAN' ? 'ROWAN' : 'DACRE';
+    r.classList.toggle('narrator', item.who === 'NARRATOR');
+    r.querySelector('.who').textContent = item.who === 'ROWAN' ? 'ROWAN' : item.who === 'NARRATOR' ? 'NARRATOR' : 'DACRE';
     r.querySelector('.txt').textContent = item.text;
     r.classList.add('on');
-    if (item.who === 'DACRE' && this.game.audio.ready) this.game.audio.static();
-    const ms = Math.max(2600, item.text.length * 62);
+    // only the story narrator is spoken; radio and thought lines stay as text
+    Narrator.enabled = !!this.game.access.narration;
+    const spoken = item.who === 'NARRATOR';
+    if (spoken) Narrator.speak(item.text, 'NARRATOR', true);
+    const ms = Math.max(2600, item.text.length * 62, spoken ? Narrator.ms(item.text) : 0);
     clearTimeout(this.radioT);
     this.radioT = setTimeout(() => { r.classList.remove('on'); this.radioT = setTimeout(() => this.nextRadio(), 380); }, ms);
   }
-  clearRadio() { this.radioQ = []; this.radioBusy = false; clearTimeout(this.radioT); document.getElementById('radio').classList.remove('on'); }
+  clearRadio() { Narrator.stop(); this.radioQ = []; this.radioBusy = false; clearTimeout(this.radioT); document.getElementById('radio').classList.remove('on'); }
   setClock(text) { const c = document.getElementById('hud-clock'); if (c.textContent !== text) c.textContent = text; }
 
   setPrompt(text, focused) {

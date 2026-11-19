@@ -134,7 +134,9 @@ class World {
   }
   mat(color, rough, metal, extra) {
     const key = 'w:' + color + ':' + rough + ':' + (metal || 0) + ':' + (extra ? JSON.stringify(extra) : '');
-    return Cache.mat(key, () => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: rough === undefined ? 0.8 : rough, metalness: metal || 0 }, extra || {})));
+    // everything in the house is faded and grimy: drain most of the colour and darken it a little
+    const c = new THREE.Color(color), hsl = {}; c.getHSL(hsl); c.setHSL(hsl.h, hsl.s * 0.4, hsl.l * 0.78);
+    return Cache.mat(key, () => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: rough === undefined ? 0.8 : Math.max(rough, 0.6), metalness: metal || 0 }, extra || {})));
   }
   texMat(tex, rough, extra) { return new THREE.MeshStandardMaterial(Object.assign({ map: tex, roughness: rough === undefined ? 0.9 : rough }, extra || {})); }
 
@@ -160,6 +162,7 @@ class World {
   }
   addCollider(room, x, z, hw, hd) { room.colliders.push([x - hw, x + hw, z - hd, z + hd]); }
   addLight(room, color, intensity, dist, x, y, z, flicker) {
+    intensity *= 0.55; dist *= 0.85;
     const l = new THREE.PointLight(color, intensity, dist, 2);
     l.position.set(x, y, z); room.group.add(l); room.lights.push(l);
     if (flicker) room.flickers.push({ light: l, base: intensity, amp: flicker.amp, speed: flicker.speed, phase: Math.random() * 10 });

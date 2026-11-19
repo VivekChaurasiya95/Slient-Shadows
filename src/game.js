@@ -9,7 +9,7 @@ class HorrorGame {
   constructor() {
     this.container = document.getElementById('game-container');
     this.cfg = CONFIG.difficulties.normal;
-    this.access = { reduceFlashing: false, reduceScares: false, subtitles: true };
+    this.access = { reduceFlashing: false, reduceScares: false, subtitles: true, narration: true };
     this.keys = {}; this.isLocked = false;
     this.isPlaying = false; this.isDead = false; this.hasWon = false;
     this.transitioning = false; this.inputLocked = false; this.testMode = false; this.paused = false; this.midnight = false;
@@ -57,8 +57,8 @@ class HorrorGame {
   // ------------------------------------------------------------------------
   initThree() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x030203);
-    this.scene.fog = new THREE.FogExp2(0x060508, 0.07);
+    this.scene.background = new THREE.Color(0x010101);
+    this.scene.fog = new THREE.FogExp2(0x030203, 0.1);
     this.camera = new THREE.PerspectiveCamera(CONFIG.player.fov, innerWidth / innerHeight, 0.05, 80);
     this.camera.position.set(0, CONFIG.player.eye, 9);
     this.scene.add(this.camera);
@@ -67,9 +67,11 @@ class HorrorGame {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 0.85;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // washed-out, dirty film look for the whole house
+    this.renderer.domElement.style.filter = 'saturate(0.55) sepia(0.18) contrast(1.15) brightness(0.92)';
     this.container.appendChild(this.renderer.domElement);
 
     // Flashlight lives in the scene (not on the camera) so the beam can lag behind the view
@@ -80,17 +82,17 @@ class HorrorGame {
     this.flashTarget = new THREE.Object3D();
     this.scene.add(this.flashlight, this.flashTarget); this.flashlight.target = this.flashTarget;
     // faint glow around the player so nearby floor is never fully black
-    this.fillOn = 0.5; this.fillOff = 0.12;
+    this.fillOn = 0.2; this.fillOff = 0.03;
     this.fillLight = new THREE.PointLight(0xffe2c0, this.fillOn, 7, 2); this.camera.add(this.fillLight);
     // lighter flame (intensity only, never toggled, to keep shaders stable)
     this.lighterLight = new THREE.PointLight(0xff9a40, 0, 6, 2); this.camera.add(this.lighterLight); this.lighterLight.position.set(0.25, -0.2, -0.4);
-    this.ambient = new THREE.AmbientLight(0x505870, 0.4); this.scene.add(this.ambient);
+    this.ambient = new THREE.AmbientLight(0x404660, 0.12); this.scene.add(this.ambient);
     this.lightningLight = null;
     // dust motes that follow the player
-    const n = 140, pos = new Float32Array(n * 3);
+    const n = 420, pos = new Float32Array(n * 3);
     for (let i = 0; i < n * 3; i += 3) { pos[i] = (Math.random() - 0.5) * 8; pos[i + 1] = Math.random() * 3; pos[i + 2] = (Math.random() - 0.5) * 8; }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xd9d2c4, size: 0.025, transparent: true, opacity: 0.35, depthWrite: false }));
+    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xb8b0a0, size: 0.02, transparent: true, opacity: 0.45, depthWrite: false }));
     this.dust.frustumCulled = false; this.scene.add(this.dust);
   }
 
@@ -453,8 +455,8 @@ class HorrorGame {
     const room = this.world.rooms[roomId], prev = this.room;
     Object.values(this.world.rooms).forEach(r => { r.group.visible = r === room; });
     this.room = room; this.currentRoom = roomId; this.currentRoomChanged = true; room.visited = true;
-    this.scene.fog.color.setHex(room.def.fog[0]); this.scene.fog.density = room.def.fog[1];
-    this.ambient.color.setHex(room.def.ambient[0]); this.ambient.intensity = room.def.ambient[1];
+    this.scene.fog.color.setHex(room.def.fog[0]); this.scene.fog.density = room.def.fog[1] * 1.6;
+    this.ambient.color.setHex(room.def.ambient[0]); this.ambient.intensity = room.def.ambient[1] * 0.3;
     this.audio.setRoom(room);
     this.interact.clearFocus(); this.interact.cancelPending();
     if (arrivalDoor) {
@@ -513,9 +515,9 @@ class HorrorGame {
   updateStage() {
     const t = this.clockT, S = CONFIG.stageSeconds;
     const ts = t > S[2] ? 3 : t > S[1] ? 2 : t > S[0] ? 1 : 0;
-    const ps = this.hasRelic ? 3 : this.unlocked.size >= 2 ? 2 : (this.unlocked.size >= 1 || this.hasKey) ? 1 : 0;
+    const ps = this.hasRelic ? (this.ghost.relicChase && this.ghost.relicT > CONFIG.relicChase.grace + 25 ? 3 : 2) : this.unlocked.size >= 2 ? 2 : (this.unlocked.size >= 1 || this.hasKey) ? 1 : 0;
     const st = Math.max(ts, ps);
-    if (st !== this.stage) { this.stage = st; this.hud.toast(['', 'The house stirs', 'Something is hunting for you', 'It is awake'][st] || ''); this.scene.fog.density = this.room.def.fog[1] * (1 + st * 0.12); }
+    if (st !== this.stage) { this.stage = st; this.hud.toast(['', 'The house stirs', 'Something is hunting for you', 'It is awake'][st] || ''); this.scene.fog.density = this.room.def.fog[1] * 1.6 * (1 + st * 0.12); }
   }
 
   updateObjective() {
@@ -750,7 +752,7 @@ class HorrorGame {
     $('btn-play-game').addEventListener('click', () => {
       this.audio.ensure();
       this.cfg = CONFIG.difficulties[$('menu-diff').value] || CONFIG.difficulties.normal;
-      this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked };
+      this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked, narration: $('menu-narr').checked };
       const typed = $('menu-seed').value.trim().toUpperCase();
       if (typed && typed !== this.seed) this.newRun(typed); else this.ghost.reset();
       this.hud.hideModal($('start-menu'));

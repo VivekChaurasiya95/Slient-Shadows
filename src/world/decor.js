@@ -37,14 +37,14 @@ Object.assign(World.prototype, {
   // Jack-o'-lantern. variant picks one of four carved faces.
   makePumpkin(room, x, z, ry, variant, withLight) {
     const g = new THREE.Group(); g.position.set(x, 0.3, z); g.rotation.y = ry; room.group.add(g);
-    const body = new THREE.Mesh(Cache.geo('pumpkin', () => new THREE.SphereGeometry(0.34, 18, 14)), this.mat(0xc9490a, 0.55, 0, { emissive: 0x4a1a00, emissiveIntensity: 0.9 }));
-    body.scale.set(1.1, 0.88, 1.1); body.castShadow = true; g.add(body);
+    const body = new THREE.Mesh(Cache.geo('pumpkin', () => new THREE.SphereGeometry(0.34, 18, 14)), this.mat(0x5c3410, 0.85, 0, { emissive: 0x2a0c00, emissiveIntensity: 0.6 }));
+    body.scale.set(1.15, 0.7, 1.1); body.rotation.z = 0.15; body.castShadow = true; g.add(body);
     const stem = new THREE.Mesh(Cache.geo('pstem', () => new THREE.CylinderGeometry(0.035, 0.05, 0.14, 6)), this.mat(0x2c3a14, 0.9)); stem.position.y = 0.28; g.add(stem);
-    const faceMat = new THREE.MeshBasicMaterial({ map: this.lab.faces(variant % 4), transparent: true, depthWrite: false });
+    const faceMat = new THREE.MeshBasicMaterial({ map: this.lab.faces(variant % 4), transparent: true, depthWrite: false, color: 0x8a5020 });
     const face = new THREE.Mesh(Cache.geo('pface', () => new THREE.PlaneGeometry(0.52, 0.52)), faceMat); face.position.z = 0.365; g.add(face);
     const p = { group: g, body, faceMat, light: null };
     if (withLight) {
-      p.light = this.addLight(room, 0xff7a18, 1.4, 7, x, 0.55, z, { amp: 0.3, speed: 9 });
+      p.light = this.addLight(room, 0xff6a10, 0.7, 5, x, 0.55, z, { amp: 0.5, speed: 9 });
       p.baseColor = 0xff7a18; (room.pumpkins = room.pumpkins || []).push(p);
       room.colliders.push([x - 0.35, x + 0.35, z - 0.35, z + 0.35]);
     }
@@ -63,7 +63,8 @@ Object.assign(World.prototype, {
 
   addSkeleton(room, x, z, ry) {
     const g = new THREE.Group(); g.position.set(x, 0.5, z); g.rotation.y = ry; room.group.add(g);
-    const bone = this.mat(0xcfc8b0, 0.7), M = (geo, px, py, pz, rx, rz) => { const m = new THREE.Mesh(geo, bone); m.position.set(px, py, pz); m.rotation.set(rx || 0, 0, rz || 0); m.castShadow = true; g.add(m); return m; };
+    g.rotation.z = 0.22; g.rotation.x = -0.12;
+    const bone = this.mat(0x8c8470, 0.85), M = (geo, px, py, pz, rx, rz) => { const m = new THREE.Mesh(geo, bone); m.position.set(px, py, pz); m.rotation.set(rx || 0, 0, rz || 0); m.castShadow = true; g.add(m); return m; };
     const cg = Cache.geo('bone.c', () => new THREE.CylinderGeometry(0.025, 0.02, 0.4, 6));
     M(Cache.geo('skull.d', () => new THREE.SphereGeometry(0.11, 12, 10)), 0, 0.88, 0);
     M(Cache.geo('bone.sp', () => new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6)), 0, 0.55, 0);
@@ -71,7 +72,6 @@ Object.assign(World.prototype, {
     M(cg, -0.25, 0.7, 0.05, 0, 0.5); M(cg, 0.25, 0.7, 0.05, 0, -0.5); M(cg, -0.12, 0.2, 0.25, Math.PI / 2 - 0.2); M(cg, 0.12, 0.2, 0.25, Math.PI / 2 - 0.2);
     const eye = new THREE.MeshBasicMaterial({ color: 0x000000 });
     [-0.04, 0.04].forEach(dx => { const e = new THREE.Mesh(Cache.geo('seye', () => new THREE.SphereGeometry(0.025, 6, 6)), eye); e.position.set(dx, 0.9, 0.09); g.add(e); });
-    const hat = new THREE.Mesh(Cache.geo('hat', () => new THREE.ConeGeometry(0.1, 0.22, 8)), this.mat(0x1a1020, 0.9)); hat.position.set(0, 1.07, 0); hat.rotation.z = 0.2; g.add(hat);
     room.updaters.push((dt, t) => { g.children[0].rotation.y = Math.sin(t * 0.3) * 0.25; });
   },
 
@@ -88,8 +88,14 @@ Object.assign(World.prototype, {
   addPaperGhosts(room) {
     const b = room.bounds, tex = Cache.tex('tex.pghost', () => {
       const c = document.createElement('canvas'); c.width = 64; c.height = 96; const g = c.getContext('2d');
-      g.fillStyle = '#e8e4d8'; g.beginPath(); g.moveTo(8, 96); g.lineTo(8, 30); g.quadraticCurveTo(32, -10, 56, 30); g.lineTo(56, 96); for (let i = 0; i < 4; i++) g.lineTo(56 - (i + 1) * 12, i % 2 ? 96 : 84); g.fill();
-      g.fillStyle = '#111'; g.beginPath(); g.ellipse(24, 40, 5, 8, 0, 0, 7); g.ellipse(42, 40, 5, 8, 0, 0, 7); g.ellipse(33, 62, 5, 9, 0, 0, 7); g.fill();
+      // a burlap doll hanging from a rope, button eyes, stitched mouth
+      g.strokeStyle = '#2a2016'; g.lineWidth = 2; g.beginPath(); g.moveTo(32, 0); g.lineTo(32, 18); g.stroke();
+      g.fillStyle = '#5a4a34'; g.beginPath(); g.arc(32, 28, 11, 0, 7); g.fill();
+      g.beginPath(); g.moveTo(22, 38); g.lineTo(42, 38); g.lineTo(46, 76); g.lineTo(18, 76); g.fill();
+      g.fillRect(12, 40, 8, 26); g.fillRect(44, 40, 8, 26); g.fillRect(22, 76, 7, 18); g.fillRect(35, 76, 7, 16);
+      g.fillStyle = '#000'; g.beginPath(); g.arc(28, 26, 2.6, 0, 7); g.arc(36, 26, 2.6, 0, 7); g.fill();
+      g.strokeStyle = '#000'; g.lineWidth = 1; g.beginPath(); g.moveTo(26, 33); g.lineTo(38, 33); for (let x = 27; x < 38; x += 3) { g.moveTo(x, 31); g.lineTo(x, 35); } g.stroke();
+      g.fillStyle = 'rgba(90,8,8,0.8)'; g.fillRect(24, 50, 16, 6);
       const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
     });
     for (let i = 0; i < 3; i++) {
@@ -144,10 +150,75 @@ Object.assign(World.prototype, {
     m.position.set(x, y, z); m.rotation.y = ry; room.group.add(m); return m;
   },
 
+  // Abandoned for 47 years: dirt and debris on the floor, damp and torn paper on the walls,
+  // boarded windows, writing on the walls, cobwebs hanging from the ceiling. Nothing here collides.
+  addAbandonment(room) {
+    const b = room.bounds, H = room.H, L = this.lab, rnd = (a, c) => a + Math.random() * (c - a);
+    const nearDoor = (x, z, r) => room.doors.some(d => Math.hypot(d.bx - x, d.bz - z) < r);
+    const flat = (tex, size, x, y, z, rx, ry, op, color) => {
+      const m = new THREE.Mesh(Cache.geo('plane:' + size, () => new THREE.PlaneGeometry(size, size)), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, opacity: op, color: color || 0xffffff }));
+      m.position.set(x, y, z); m.rotation.set(rx, ry, 0, 'YXZ'); m.renderOrder = 1; room.group.add(m); return m;
+    };
+    // 1. dirt and damp patches on the floor
+    for (let i = 0; i < 9; i++) { const m = flat(L.blot(), rnd(1.2, 2.6), rnd(b.minX + 0.6, b.maxX - 0.6), 0.012 + i * 0.001, rnd(b.minZ + 0.6, b.maxZ - 0.6), -Math.PI / 2, 0, 0.9); m.rotation.z = rnd(0, 6); }
+    // 2. old letters, broken glass and splintered planks
+    const scrapTex = L.scrap(), glass = new THREE.MeshBasicMaterial({ color: 0x9aa4a8, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+    for (let i = 0; i < 14; i++) { const m = flat(scrapTex, 0.22, rnd(b.minX + 0.4, b.maxX - 0.4), 0.025 + i * 0.0005, rnd(b.minZ + 0.4, b.maxZ - 0.4), -Math.PI / 2, 0, 0.85); m.rotation.z = rnd(0, 6); }
+    const plank = this.mat(0x2a2016, 0.95);
+    for (let i = 0; i < 5; i++) {
+      const x = rnd(b.minX + 0.5, b.maxX - 0.5), z = rnd(b.minZ + 0.5, b.maxZ - 0.5), l = rnd(0.5, 1.2);
+      this.addMesh(room, Cache.geo('box:plank' + l.toFixed(1), () => new THREE.BoxGeometry(0.12, 0.025, +l.toFixed(1))), plank, x, 0.015, z, { ry: rnd(0, 3), rz: rnd(-0.08, 0.08) });
+    }
+    for (let i = 0; i < 8; i++) {
+      const sh = this.addMesh(room, Cache.geo('shard', () => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 0.09, 0, 0.02, 0.03, 0, 0.11]), 3)); g.computeVertexNormals(); return g; }), glass, rnd(b.minX + 0.5, b.maxX - 0.5), 0.02, rnd(b.minZ + 0.5, b.maxZ - 0.5), { ry: rnd(0, 6), cast: false });
+      sh.scale.setScalar(rnd(0.7, 1.6));
+    }
+    // 3. walls: damp blooms, hanging strips of wallpaper, writing
+    const walls = [
+      { ry: Math.PI / 2, at: (u, y) => [b.minX + 0.02, y, u], span: [b.minZ, b.maxZ] },
+      { ry: -Math.PI / 2, at: (u, y) => [b.maxX - 0.02, y, u], span: [b.minZ, b.maxZ] },
+      { ry: 0, at: (u, y) => [u, y, b.minZ + 0.02], span: [b.minX, b.maxX] },
+      { ry: Math.PI, at: (u, y) => [u, y, b.maxZ - 0.02], span: [b.minX, b.maxX] }
+    ];
+    const stone = room.def.floor === 'stone';
+    walls.forEach((w, wi) => {
+      for (let i = 0; i < 2; i++) { const p = w.at(rnd(w.span[0] + 1, w.span[1] - 1), rnd(H * 0.55, H - 0.6)); flat(L.blot(), rnd(1.4, 2.4), p[0], p[1], p[2], 0, w.ry, 0.8, 0x6a6a50); }
+      if (!stone) for (let i = 0; i < 2; i++) {
+        const u = rnd(w.span[0] + 0.8, w.span[1] - 0.8), p = w.at(u, H - 0.05); if (nearDoor(p[0], p[2], 1.4)) continue;
+        const len = rnd(0.5, 1.3), strip = new THREE.Mesh(Cache.geo('strip' + len.toFixed(1), () => { const g = new THREE.PlaneGeometry(0.4, +len.toFixed(1)); g.translate(0, -len.toFixed(1) / 2, 0); return g; }), this.mat(0x3a3428, 0.95, 0, { side: THREE.DoubleSide }));
+        strip.position.set(p[0], p[1], p[2]); strip.rotation.set(0, w.ry, 0, 'YXZ'); room.group.add(strip);
+        const ph = Math.random() * 6; room.updaters.push((dt, t) => { strip.rotation.x = 0.25 + Math.sin(t * 0.5 + ph) * 0.04; });
+      }
+    });
+    const scrawls = { corridor: 'LET ME OUT', parlor: 'SHE HEARS|YOU', bedroom: 'MOTHER?', kitchen: 'DONT|BREATHE', library: 'THE DOOR|IS THIN', nursery: 'SHE IS|UNDER', cellar: 'HELP US', crypt: '1898' };
+    if (scrawls[room.id]) {
+      for (let tries = 0; tries < 12; tries++) {
+        const w = walls[Math.floor(Math.random() * 4)], p = w.at(rnd(w.span[0] + 1.2, w.span[1] - 1.2), rnd(1.4, 2.1));
+        if (nearDoor(p[0], p[2], 1.6)) continue;
+        flat(L.scrawl(scrawls[room.id]), 1.3, p[0], p[1], p[2], 0, w.ry, 0.9); break;
+      }
+    }
+    // 4. windows boarded over, light gets through the gaps
+    const board = this.mat(0x241a10, 0.95);
+    room.windows.forEach(win => {
+      const g = new THREE.Group(); g.position.set(win.x, win.y, win.z); g.rotation.y = win.ry; room.group.add(g);
+      [[0.5, 0.12], [0.05, -0.08], [-0.45, 0.18]].forEach(([y, rz]) => { const m = new THREE.Mesh(Cache.geo('box:board', () => new THREE.BoxGeometry(2.0, 0.2, 0.04)), board); m.position.set(0, y, 0.16); m.rotation.z = rz; m.castShadow = true; g.add(m); });
+    });
+    // 5. cobweb strands hanging from the ceiling
+    const webMat = new THREE.MeshBasicMaterial({ map: L.cobweb(), transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.45 });
+    for (let i = 0; i < 7; i++) {
+      const x = rnd(b.minX + 0.5, b.maxX - 0.5), z = rnd(b.minZ + 0.5, b.maxZ - 0.5), s = rnd(0.5, 1.0);
+      const m = new THREE.Mesh(Cache.geo('webhang' + s.toFixed(1), () => { const g = new THREE.PlaneGeometry(+s.toFixed(1), +s.toFixed(1) * 1.4); g.translate(0, -s.toFixed(1) * 0.7, 0); return g; }), webMat);
+      m.position.set(x, H - 0.01, z); m.rotation.y = rnd(0, 6); room.group.add(m);
+      const ph = Math.random() * 6; room.updaters.push((dt, t) => { m.rotation.x = Math.sin(t * 0.4 + ph) * 0.08; });
+    }
+  },
+
   // Role based dressing plus blood and handprints
   decorate(room) {
     const b = room.bounds, rnd = (a, c) => a + Math.random() * (c - a);
-    this.addCobwebCorners(room, room.id === 'crypt' ? 0 : 2);
+    this.addCobwebCorners(room, 4);
+    this.addAbandonment(room);
     const n = room.role === 'trap' ? 4 : room.id === 'corridor' ? 3 : 1;
     for (let i = 0; i < n; i++) {
       const ry = [Math.PI / 2, -Math.PI / 2, 0, Math.PI][i % 4], kind = i % 2 ? 'hand' : 'smear';

@@ -66,7 +66,7 @@ Object.assign(World.prototype, {
     this.addMirror(room, 4.97, 1.8, -4.5, -Math.PI / 2, 0.9, 1.3);
     // window, moonlight, crows
     this.addWindow(room, 0, 1.9, -5.97, 0, 1.6, 1.8);
-    const moon = new THREE.SpotLight(0x8ea8e8, 3.2, 16, 0.75, 0.8, 1.2); moon.position.set(0, 2.4, -6); moon.target.position.set(0.5, 0, -1.5);
+    const moon = new THREE.SpotLight(0x8ea8e8, 1.6, 16, 0.75, 0.8, 1.2); moon.position.set(0, 2.4, -6); moon.target.position.set(0.5, 0, -1.5);
     room.group.add(moon, moon.target); room.lights.push(moon);
     this.addCrows(room, 0.4, 1.0, -5.9);
     this.addCandleCluster(room, -1.5, 0.65, -5.6);
