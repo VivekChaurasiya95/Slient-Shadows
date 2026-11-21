@@ -675,12 +675,31 @@ class HorrorGame {
 
   // The cellar fuse box accepts the fuse and powers an emergency lamp
   setupExtras() {
-    const room = this.world.rooms.cellar, fb = room.fuseBox, game = this;
-    if (!fb) return;
-    fb.ia = new Interactable(this, { id: 'fusebox', room, meshes: [fb.mesh], reach: 2.8,
-      prompt: () => (fb.powered ? 'The fuse box hums' : 'A fuse is missing'),
-      onInteract: () => { if (fb.powered) return; const f = game.inventory.slots.find(s => s && s.id === 'fuse'); if (!f) game.hud.toast('A fuse is missing'); else game.fuseBoxUse(f); },
-      onUse: it => { if (it && it.id === 'fuse' && !fb.powered) { game.fuseBoxUse(it); return true; } return false; } });
+    const game = this;
+    // cellar fuse box (existing)
+    const cellar = this.world.rooms.cellar, fb = cellar && cellar.fuseBox;
+    if (fb) {
+      fb.ia = new Interactable(this, { id: 'fusebox', room: cellar, meshes: [fb.mesh], reach: 2.8,
+        prompt: () => (fb.powered ? 'The fuse box hums' : 'A fuse is missing'),
+        onInteract: () => { if (fb.powered) return; const f = game.inventory.slots.find(s => s && s.id === 'fuse'); if (!f) game.hud.toast('A fuse is missing'); else game.fuseBoxUse(f); },
+        onUse: it => { if (it && it.id === 'fuse' && !fb.powered) { game.fuseBoxUse(it); return true; } return false; } });
+    }
+    // bedroom light switch: flip it to turn the ceiling bulb on or off
+    const bed = this.world.rooms.bedroom, sw = bed && bed.lampSwitch;
+    if (sw) {
+      sw.baseLight = bed.lightLevel;   // natural lit-ness without the bulb (builder + decor set this)
+      sw.ia = new Interactable(this, { id: 'lampswitch', room: bed, meshes: [sw.plate], reach: 2.6,
+        prompt: () => (sw.on ? 'Turn off the light' : 'Turn on the light'),
+        onInteract: () => {
+          sw.on = !sw.on;
+          sw.light.intensity = sw.on ? sw.base : 0;
+          sw.bulb.material.color.setHex(sw.on ? 0xffe9c2 : 0x2a2620);
+          sw.toggle.rotation.z = sw.on ? 0.28 : -0.28;
+          bed.lightLevel = sw.on ? Math.max(sw.baseLight, 0.7) : sw.baseLight;
+          game.audio.click();
+          game.hud.toast(sw.on ? 'The bulb hums to life' : 'The light goes out');
+        } });
+    }
   }
   fuseBoxUse(fuse) {
     const room = this.world.rooms.cellar, fb = room.fuseBox;
