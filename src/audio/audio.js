@@ -414,4 +414,17 @@ class AudioEngine {
     this.thud(null, 0.5);
   }
   stun() { this.tone({ type: 'sawtooth', f0: 600, f1: 90, dur: 0.7, gain: 0.35, lp: 2200 }); this.noise({ filter: 'highpass', f0: 2500, dur: 0.4, gain: 0.35 }); this.say('[The apparition recoils]'); }
-}
+
+  // Rain on a roof: looping noise. level 0 stops it. Used by the menu and the cutscenes.
+  rainOn(level) {
+    if (!this.ensure()) return;
+    const c = this.ctx, t = c.currentTime;
+    if (!this.rainNode) {
+      const src = c.createBufferSource(); src.buffer = this.pinkBuf; src.loop = true;
+      const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900; const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7500;
+      const g = c.createGain(); g.gain.value = 0; src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(this.master); src.start();
+      this.rainNode = { g, src };
+    }
+    this.rainNode.g.gain.cancelScheduledValues(t); this.rainNode.g.gain.linearRampToValueAtTime(clamp(level, 0, 1) * 0.16, t + 1.2);
+  }
+  gust(vol) { this.noise({ filter: 'bandpass', f0: 300, f1: 900, q: 0.7, dur: 2.6, gain: vol || 0.25, atk: 0.8, pink: true }); this.say('[Wind howls]'); }}

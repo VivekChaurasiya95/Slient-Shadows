@@ -9,8 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <script src="lib/three.min.js"></script>
+  <link rel="icon" href="favicon.ico" sizes="any">
 </head>
-<link rel="icon" href="/favicon.ico" sizes="any">
 <body class="game-body">
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <filter id="chroma"><feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r"/><feOffset in="r" dx="-4" dy="0" result="ro"/><feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g"/><feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b"/><feOffset in="b" dx="4" dy="0" result="bo"/><feBlend in="ro" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="bo" mode="screen"/></filter>
@@ -74,21 +74,17 @@
     <div id="fade"></div>
   </div>
 
-  <div id="story-modal" class="modal">
-    <div class="story-bg"></div>
-    <div class="story-card">
-      <div id="story-dots"></div>
-      <div class="story-stage"><canvas id="story-canvas" width="680" height="300"></canvas></div>
-      <p id="story-kicker"></p>
-      <div id="story-body"></div>
-      <div class="story-actions">
-        <button id="story-skip" class="story-skip" type="button">Skip story</button>
-        <span id="story-hint"></span>
-        <button id="story-next" class="play-btn story-next" type="button" disabled>Continue</button>
-      </div>
-    </div>
+  <!-- Cutscene layer: letterbox bars, captions, chapter card, skip and Begin. The 3D scene itself is drawn by the game renderer. -->
+  <div id="cine-layer">
+    <div class="cine-bar top"></div><div class="cine-bar bottom"></div>
+    <div id="cine-chapter"><span class="k"></span><h2></h2><p></p></div>
+    <div id="cine-caption"><span class="who"></span><span class="txt"></span></div>
+    <div id="cine-flash"></div>
+    <div id="cine-fade"></div>
+    <div id="cine-hint"></div>
+    <button id="cine-skip" type="button">Skip</button>
+    <button id="cine-begin" type="button">Begin</button>
   </div>
-
   <div class="end-modal modal" id="pause-modal">
     <div class="end-card">
       <h1 class="end-title">Paused</h1>
@@ -100,42 +96,73 @@
 
   <div id="note-modal" class="modal"><div class="paper"><p id="note-text"></p><small>Press E to put it away</small></div></div>
 
+  <!-- Main menu. The animated manor behind it is a 3D scene drawn by the game renderer. -->
   <div class="menu-modal modal visible" id="start-menu" style="display:flex">
-    <div class="menu-backdrop"></div>
-    <div class="menu-card">
-      <div class="menu-scene"><div class="menu-scene-text">
-        <p class="menu-tagline">First-person stealth horror</p>
-        <h1 class="menu-title">Silent Shadows</h1>
-        <p class="menu-subtitle">The Samhain Extraction</p>
-      </div></div>
-      <div class="menu-panel">
-        <p class="menu-brief">Take the cursed horned skull from a Victorian manor. Something wanders the house and listens. Every key, note and hiding place changes with the seed.</p>
-        <div class="hardware-row">
-          <button id="btn-toggle-mic" class="hw-btn"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="hw-text"><strong>Microphone</strong><small id="mic-status-label">Reacts to your real voice</small></span></button>
-          <button id="btn-toggle-cam" class="hw-btn"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg><span class="hw-text"><strong>Bodycam</strong><small id="cam-status-label">Shows your face in night vision</small></span></button>
-        </div>
-        <div class="menu-mic-preview"><label>Microphone level</label><div class="menu-meter-track"><div class="menu-meter-fill" id="menu-mic-fill"></div></div></div>
-        <div class="opts">
-          <label class="opt"><span>Seed <button id="menu-daily" class="linkbtn" type="button">use today's</button></span><input id="menu-seed" type="text" maxlength="12" placeholder="random" autocomplete="off" spellcheck="false"></label>
-          <label class="opt"><span>Difficulty</span><select id="menu-diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="nightmare">Nightmare</option></select></label>
-          <label class="chk"><input id="menu-flash" type="checkbox"><span>Reduce flashing</span></label>
-          <label class="chk"><input id="menu-scares" type="checkbox"><span>Reduce scares</span></label>
-          <label class="chk"><input id="menu-subs" type="checkbox" checked><span>Subtitles for sounds</span></label>
-          <label class="chk"><input id="menu-narr" type="checkbox" checked><span>Voice narration</span></label>
-        </div>
-        <dl class="controls-guide">
-          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move, <kbd>Shift</kbd> sprint (loud, costs stamina), <kbd>C</kbd> crouch</dd></div>
-          <div><dt><kbd>E</kbd></dt><dd>Interact. Tap a door to open it fast, hold for slow and quiet</dd></div>
-          <div><dt><kbd>1</kbd>-<kbd>6</kbd></dt><dd>Select item, <kbd>R</kbd> use, <kbd>Q</kbd> drop, <kbd>Shift</kbd>+<kbd>Q</kbd> throw</dd></div>
-          <div><dt><kbd>Tab</kbd></dt><dd>Inventory, notes and map, <kbd>F</kbd> flashlight</dd></div>
-          <div><dt><kbd>Space</kbd></dt><dd>Hold your breath while hidden</dd></div>
-          <div><dt>Hide</dt><dd>Look at a wardrobe, bed, curtain or coffin and press <kbd>E</kbd>. <kbd>Esc</kbd> pauses</dd></div>
-        </dl>
-        <button id="btn-play-game" class="play-btn">Enter the house</button>
-      </div>
+    <div class="menu-shade"></div>
+    <div class="menu-main">
+      <p class="menu-tagline">First-person stealth horror</p>
+      <h1 class="menu-title" id="menu-title">Silent Shadows</h1>
+      <p class="menu-subtitle">The Samhain Extraction</p>
+      <nav class="menu-nav" aria-label="Main menu">
+        <button id="btn-play-game" class="mbtn primary" type="button">Begin the night</button>
+        <button class="mbtn" type="button" data-panel="options">Options</button>
+        <button class="mbtn" type="button" data-panel="how">How to play</button>
+        <button class="mbtn" type="button" data-panel="story">The story</button>
+      </nav>
+      <p class="menu-foot">Take the skull. Stay quiet. Be gone by dawn.</p>
     </div>
-  </div>
 
+    <aside class="side-panel" id="side-panel" aria-hidden="true">
+      <button class="panel-close" id="panel-close" type="button" aria-label="Close">&times;</button>
+
+      <section data-panel="options">
+        <h2>Options</h2>
+        <div class="field"><span class="flabel">Difficulty</span>
+          <div class="seg" id="seg-diff" role="radiogroup" aria-label="Difficulty">
+            <button type="button" role="radio" data-v="easy">Easy</button><button type="button" role="radio" data-v="normal" class="on" aria-checked="true">Normal</button><button type="button" role="radio" data-v="nightmare">Nightmare</button>
+          </div>
+          <select id="menu-diff" class="sr-only" aria-hidden="true" tabindex="-1"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="nightmare">Nightmare</option></select>
+        </div>
+        <div class="field"><label class="flabel" for="menu-seed">Seed <button id="menu-daily" class="linkbtn" type="button">use today's</button></label>
+          <input id="menu-seed" type="text" maxlength="12" placeholder="random" autocomplete="off" spellcheck="false">
+          <small class="fhint">The same seed gives the same house, the same items and the same night.</small></div>
+        <div class="field"><span class="flabel">Accessibility</span>
+          <label class="switch"><input id="menu-flash" type="checkbox"><i></i><span>Reduce flashing</span></label>
+          <label class="switch"><input id="menu-scares" type="checkbox"><i></i><span>Reduce scares</span></label>
+          <label class="switch"><input id="menu-subs" type="checkbox" checked><i></i><span>Subtitles for sounds</span></label>
+          <label class="switch"><input id="menu-narr" type="checkbox" checked><i></i><span>Voice narration</span></label>
+        </div>
+        <div class="field"><span class="flabel">Devices</span>
+          <div class="hardware-row">
+            <button id="btn-toggle-mic" class="hw-btn" type="button"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="hw-text"><strong>Microphone</strong><small id="mic-status-label">Reacts to your real voice</small></span></button>
+            <button id="btn-toggle-cam" class="hw-btn" type="button"><svg class="hw-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg><span class="hw-text"><strong>Bodycam</strong><small id="cam-status-label">Shows your face in night vision</small></span></button>
+          </div>
+          <div class="menu-mic-preview"><label>Microphone level</label><div class="menu-meter-track"><div class="menu-meter-fill" id="menu-mic-fill"></div></div></div>
+        </div>
+      </section>
+
+      <section data-panel="how">
+        <h2>How to play</h2>
+        <dl class="controls-guide">
+          <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move. <kbd>Shift</kbd> sprints (loud, costs stamina). <kbd>C</kbd> crouches</dd></div>
+          <div><dt><kbd>E</kbd></dt><dd>Interact. Tap a door to open it fast, hold for slow and quiet</dd></div>
+          <div><dt><kbd>1</kbd>-<kbd>6</kbd></dt><dd>Select item. <kbd>R</kbd> use, <kbd>Q</kbd> drop, <kbd>Shift</kbd>+<kbd>Q</kbd> throw</dd></div>
+          <div><dt><kbd>Tab</kbd></dt><dd>Inventory, notes and map. <kbd>F</kbd> flashlight</dd></div>
+          <div><dt><kbd>Space</kbd></dt><dd>Hold your breath while hidden</dd></div>
+          <div><dt>Hide</dt><dd>Look at a wardrobe, bed, curtain or coffin and press <kbd>E</kbd></dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Pause. Nothing moves while you are away</dd></div>
+        </dl>
+        <p class="note">Something wanders the house and listens. Footsteps, doors, your microphone. Sprinting is loud. Crouching is silent.</p>
+      </section>
+
+      <section data-panel="story">
+        <h2>The story</h2>
+        <p>Hollow Manor has been silent for forty-seven years. In 1898 Josiah Hollow locked his daughter Elspeth in the crypt and bound her spirit to a horned skull.</p>
+        <p>You are Rowan Vale, a relic extractor in debt. One night, one object. A fixer called Dacre will talk to you over the bodycam radio. He is very calm.</p>
+        <p>The rest of the Hollow family's story is told in memories, the first time you step into each room.</p>
+      </section>
+    </aside>
+  </div>
   <div class="end-modal modal" id="game-over-modal">
     <div class="end-card">
       <h1 class="end-title death-title">You died</h1>
@@ -170,10 +197,13 @@
   <script src="src/gameplay/ghost-ai.js"></script>
   <script src="src/gameplay/jumpscares.js"></script>
   <script src="src/gameplay/director.js"></script>
-  <script src="src/story/cinematic.js"></script>
-  <script src="src/story/cinematic-scenes.js"></script>
+  <script src="src/story/puppets.js"></script>
+  <script src="src/story/cinema-kit.js"></script>
+  <script src="src/story/cinema.js"></script>
+  <script src="src/story/cine-scenes.js"></script>
   <script src="src/story/story.js"></script>
   <script src="src/ui/hud.js"></script>
+  <script src="src/ui/menu.js"></script>
   <script src="src/ui/debug.js"></script>
   <script src="src/game.js"></script>
 </body>

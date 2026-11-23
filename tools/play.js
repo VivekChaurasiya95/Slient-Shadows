@@ -17,7 +17,7 @@ const seed = process.argv[2] || 'TESTA1';
   page.on('pageerror', e => errs.push('PAGEERR ' + e.message + ' | ' + (e.stack || '').split('\n').slice(1, 4).join(' ')));
   await page.goto('http://localhost:8766/');
   await page.waitForTimeout(3000);
-  await page.fill('#menu-seed', seed);
+  await page.click('.mbtn[data-panel=options]'); await page.waitForTimeout(500); await page.fill('#menu-seed', seed);
   await page.evaluate(() => { window.__game.testMode = true; });
   await page.click('#btn-play-game');
   await page.waitForTimeout(1500);

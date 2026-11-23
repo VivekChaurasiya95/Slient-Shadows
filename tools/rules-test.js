@@ -18,7 +18,7 @@ const srv = http.createServer((req, res) => {
   await page.goto('http://localhost:8772/'); await page.waitForTimeout(3000);
   await page.evaluate(() => { __game.testMode = true; });
   await page.click('#btn-play-game'); await page.waitForTimeout(600);
-  console.log('after click:', JSON.stringify(await page.evaluate(() => ({ playing: __game.isPlaying, intro: __game.intro.active, test: __game.testMode, paused: __game.paused }))));
+  console.log('after click:', JSON.stringify(await page.evaluate(() => ({ playing: __game.isPlaying, cine: __game.cinema.active, test: __game.testMode, paused: __game.paused }))));
   await page.evaluate(() => {
     const g = __game; g.god = true; window.sim = (sec, dt) => { dt = dt || 0.05; for (let t = 0; t < sec; t += dt) g.step(dt); };
     g.ghost.aiEnabled = true; g.ghost.dormantT = 0;

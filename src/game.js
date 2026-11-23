@@ -5,6 +5,8 @@
 //   core / world-data / audio / items / interact / doors / world / spots / rooms /
 //   decor / hiding / ghost / ghost-ai / jumpscares / director / hud / run / debug
 // ==========================================================================
+const ROOM_CUTSCENES = ['parlor', 'bedroom', 'kitchen', 'library', 'nursery', 'cellar', 'crypt'];
+
 class HorrorGame {
   constructor() {
     this.container = document.getElementById('game-container');
@@ -41,8 +43,9 @@ class HorrorGame {
     this.atmosphere = new Atmosphere(this);
     this.director = new ScareDirector(this);
     this.story = new StoryDirector(this);
-    this.intro = new StoryIntro(this);
     this.ghost = new Ghost(this);
+    this.cinema = new Cinema(this);
+    this.menu = new MenuScene(this);
     this.initHardware();
     this.initMenu();
     this.setupEvents();
@@ -101,6 +104,8 @@ class HorrorGame {
     const rooms = Object.values(this.world.rooms), keep = this.room;
     rooms.forEach(r => { rooms.forEach(o => { o.group.visible = o === r; }); this.renderer.compile(this.scene, this.camera); this.renderer.render(this.scene, this.camera); });
     rooms.forEach(o => { o.group.visible = o === keep; });
+    // the opening cutscene is built and compiled now, so pressing Begin the night never stalls
+    try { this.cinema.prepare('opening'); } catch (e) { console.warn('opening prepare failed', e); }
   }
 
   rand() { return this.rng.next(); }
@@ -223,10 +228,10 @@ class HorrorGame {
   // Pause: nothing simulates (ghost, clock, tweens, audio) until the mouse is back
   // ------------------------------------------------------------------------
   shouldPauseOnUnlock() {
-    return this.isPlaying && !this.isDead && !this.hasWon && !this.testMode && !this.hud.noteOpen && !(this.debug && this.debug.open);
+    return this.isPlaying && !this.isDead && !this.hasWon && !this.testMode && !this.hud.noteOpen && !this.cinema.active && !(this.debug && this.debug.open);
   }
   pause(releaseLock) {
-    if (this.paused || !this.isPlaying || this.isDead || this.hasWon) return;
+    if (this.paused || !this.isPlaying || this.isDead || this.hasWon || this.cinema.active) return;
     this.paused = true; this.keys = {}; this.interact.cancelPending();
     if (this.audio.ctx) this.audio.ctx.suspend();
     document.getElementById('pause-sub').textContent = 'Nothing moves while you are away';
@@ -316,13 +321,16 @@ class HorrorGame {
   animate() {
     requestAnimationFrame(() => this.animate());
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    // a cutscene or the menu backdrop takes over the renderer: same context, different scene and camera
+    if (this.cinema && this.cinema.active) { this.cinema.update(dt); if (this.cinema.ctx) this.renderer.render(this.cinema.ctx.scene, this.cinema.ctx.camera); return; }
+    if (this.menu && this.menu.active && this.menu.built) { this.menu.update(dt); this.renderer.render(this.menu.scene, this.menu.camera); return; }
     this.step(dt);
     if (this.room && this.room.mirror) renderMirror(this, this.room.mirror);
     this.renderer.render(this.scene, this.camera);
   }
 
   step(dt) {
-    if (this.paused) return;
+    if (this.paused || (this.cinema && this.cinema.active)) return;
     this.time += dt;
     const playing = this.isPlaying && !this.isDead && !this.hasWon;
     if (playing) { this.clockT += dt; }
@@ -331,7 +339,7 @@ class HorrorGame {
     if (playing) {
       this.updateMovement(dt);
       this.updateStage();
-      this.story.update(dt); this.updateClock(); this.updateNight();
+      this.story.update(dt); this.updateClock(); this.updateNight(); this.updateRoomCutscene();
       this.interact.update(dt);
       this.hiding.update(dt);
       this.updateLooseItems(dt);
@@ -373,7 +381,8 @@ class HorrorGame {
 
   // Called from the Begin / Skip click, so pointer lock is allowed here
   beginPlaying() {
-    this.isPlaying = true; this.clockT = 0;
+    if (this.menu) this.menu.dispose();
+    this.isPlaying = true; this.clockT = 0; this.clock.getDelta();
     this.audio.startAmbience(); this.container.requestPointerLock();
     document.getElementById('hud-layer').classList.add('live');
     this.story.start();
@@ -433,7 +442,7 @@ class HorrorGame {
     this.setupExtras();
     this.inventory.reset(); this.hiding.reset(); this.director.reset(); this.atmosphere.reset(); this.fear.reset();
     this.scares.saved = null; this.scares.busy = false; this.scares.exitDone = false;
-    this.unlocked = new Set(); this.looseItems = [];
+    this.unlocked = new Set(); this.looseItems = []; this.seenCuts = new Set(); this.pendingCut = null;
     this.isDead = false; this.hasWon = false; this.inputLocked = false; this.transitioning = false; this.redAlert = false; this.look = null;
     this.lie = null; this.lieT = 8; this.lieWarned = false;
     this.midnight = false; this.paused = false; this.stamina = 1; this.winded = false; this.sprintHold = 0;
@@ -467,9 +476,45 @@ class HorrorGame {
     }
     if (prev && prev !== room) this.ghost.onPlayerRoomChange(prev.id, roomId);
     if (this.isPlaying && prev !== room) this.story.onRoom(roomId);
+    // first visit to a room: its flashback plays once nothing dangerous is happening
+    if (this.isPlaying && prev !== room) this.pendingCut = (ROOM_CUTSCENES.includes(roomId) && !this.seenCuts.has(roomId) && !this.relicTaken) ? { id: roomId, door: arrivalDoor } : null;
     this.updateObjective();
-    if (room.trap && !room.trapDone && arrivalDoor && this.isPlaying) this.fireTrap(room, arrivalDoor);
+    if (room.trap && !room.trapDone && arrivalDoor && this.isPlaying) {
+      if (this.pendingCut && this.pendingCut.id === roomId) room.trapAfterCut = arrivalDoor;   // the flashback goes first, then the trap
+      else this.fireTrap(room, arrivalDoor);
+    }
     this.hud.renderInventory();
+  }
+
+  // ------------------------------------------------------------------------
+  // Room flashbacks. They tell the Hollow story piece by piece, once per room per run.
+  // They wait while the ghost is hunting or you are hiding, and never play after the skull is taken.
+  // ------------------------------------------------------------------------
+  canPlayCutscene() {
+    if (this.testMode && !this.testCutscenes) return false;
+    if (this.cinema.active || this.transitioning || this.isDead || this.hasWon || this.inputLocked || this.paused || this.hud.noteOpen) return false;
+    if (this.hiding.active || this.hiding.busy || this.scares.busy) return false;
+    const gh = this.ghost;
+    if (gh.state === 'HUNT' || gh.state === 'STUNNED' || gh.scripted) return false;
+    if (gh.inPlayerRoom() && gh.state !== 'DORMANT' && gh.state !== 'PATROL' && gh.distToPlayer() < 7) return false;
+    return true;
+  }
+  updateRoomCutscene() {
+    const pc = this.pendingCut; if (!pc || this.cinema.active) return;
+    if (this.relicTaken || this.hasRelic || this.currentRoom !== pc.id) { this.pendingCut = null; return; }   // leaving the room defers it to the next first entry
+    if (this.canPlayCutscene()) this.playRoomCutscene(pc);
+  }
+  playRoomCutscene(pc) {
+    this.pendingCut = null; this.seenCuts.add(pc.id);
+    this.inputLocked = true; this.keys = {}; this.interact.cancelPending(); this.interact.clearFocus(); this.hud.setPrompt(null, false); this.hud.clearRadio();
+    this.cinema.play(pc.id, { skippable: true, fadeOut: 0.6, onDone: () => this.endRoomCutscene(pc) });
+  }
+  endRoomCutscene(pc) {
+    this.inputLocked = false; this.clock.getDelta(); this.keys = {};
+    const room = this.world.rooms[pc.id];
+    // Esc leaves pointer lock: show the pause menu now that the scene is over
+    if (!this.isLocked && !this.testMode && !this.isDead) this.pause(false);
+    if (room && room.trapAfterCut) { const d = room.trapAfterCut; room.trapAfterCut = null; this.fireTrap(room, d); }
   }
 
   // Walk through an open doorway: ease to black, swap rooms, ease back in
@@ -774,9 +819,15 @@ class HorrorGame {
       this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked, narration: $('menu-narr').checked };
       const typed = $('menu-seed').value.trim().toUpperCase();
       if (typed && typed !== this.seed) this.newRun(typed); else this.ghost.reset();
-      this.hud.hideModal($('start-menu'));
-      // first play: the full story, no skip. Later plays: same story with a Skip button.
-      if (this.testMode) this.beginPlaying(); else this.intro.play(() => this.beginPlaying());
+      this.hud.hideModal($('start-menu')); this.menu.stop();
+      if (this.testMode) { this.menu.dispose(); this.beginPlaying(); return; }
+      // Menu -> opening cutscene -> a Begin button (it supplies the click that pointer lock needs) -> the night.
+      // The first time the opening cannot be skipped. After that Skip, Space or Esc work.
+      this.cinema.play('opening', {
+        skippable: StoryFlag.seen(), endButton: true, endLabel: 'Begin',
+        onStart: () => this.audio.startAmbience(),
+        onDone: completed => { if (completed || StoryFlag.seen()) StoryFlag.markSeen(); this.beginPlaying(); }
+      });
     });
     $('menu-daily').addEventListener('click', e => { e.preventDefault(); const d = new Date(); $('menu-seed').value = 'D' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); });
     $('btn-resume').addEventListener('click', () => this.resumeClicked());
