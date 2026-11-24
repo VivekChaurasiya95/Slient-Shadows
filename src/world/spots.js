@@ -16,7 +16,7 @@ function wallFacing(room, x, z) {
 function makeSpotItem(world, room, spot, desc, parent, lx, ly, lz) {
   const game = world.game;
   if (!desc) return null;
-  const extra = desc.id === 'note' ? { text: desc.text, truthful: desc.truthful } : (desc.spare ? { spare: true } : {});
+  const extra = desc.id === 'note' ? { text: desc.text, truthful: desc.truthful, tpl: desc.tpl, clue: desc.clue } : (desc.spare ? { spare: true } : {});
   const item = game.inventory.makeItem(desc.id, extra);
   const wi = new WorldItem(game, item);
   wi.attach(parent, lx, ly, lz);
@@ -25,7 +25,7 @@ function makeSpotItem(world, room, spot, desc, parent, lx, ly, lz) {
   const meshes = []; wi.mesh.traverse(o => { if (o.isMesh) meshes.push(o); });
   wi.interactable = new Interactable(game, {
     id: 'item:' + spot.def.id, room, meshes, reach: 2.7,
-    prompt: () => (item.def.kind === 'note' ? 'Read note' : 'Take ' + item.def.name.toLowerCase()),
+    prompt: () => itemPrompt(item),
     onInteract: () => wi.pickUp()
   });
   spot.items.push(wi);
@@ -52,6 +52,8 @@ function buildSpot(world, room, def, desc) {
   const grp = new THREE.Group(); grp.position.set(def.x, 0, def.z); grp.rotation.y = def.ry || 0; room.group.add(grp);
   const box = (g, mat, w, h, d, x, y, z) => { const m = new THREE.Mesh(Cache.geo('box:' + w + ',' + h + ',' + d, () => new THREE.BoxGeometry(w, h, d)), mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; g.add(m); return m; };
   const note = desc && desc.id === 'note';
+  // the library strongbox is a puzzle: dials, an electric bolt (see missions.js)
+  if (def.kind === 'safe') return game.missions.buildSafe(world, room, spot, def, desc, grp);
   // contents positioned per kind below; all contents start hidden unless on a surface
   if (def.kind === 'surface') {
     if (def.prop === 'stand') {

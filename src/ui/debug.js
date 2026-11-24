@@ -37,6 +37,9 @@ class DebugPanel {
       this.btn('relic', () => g.inventory.add(g.inventory.makeItem('relic'))),
       this.btn('unlock all', () => { WORLD_DATA.LOCK_SLOTS.forEach(s => { g.unlocked.add(s); Object.values(g.world.doors).filter(d => d.def.slot === s).forEach(d => { d.lock = null; d.buildLockVisual(); }); }); }),
       this.btn('print layout', () => { console.table(Object.entries(g.layout.items).map(([s, i]) => ({ spot: s, item: i.id, truthful: i.truthful, text: i.text || '' }))); console.log('hides', g.layout.hides, 'fake', g.layout.fakeHide, 'roles', g.layout.roles, 'traps', g.layout.traps); })]);
+    // one audition line per voice style, in the current language (studio clip if built, else the visible fallback)
+    this.group('Voice', VoiceScript.SAMPLE.map(s => this.btn(s.style, () => Voice.sample(s.style)))
+      .concat([this.btn('stop', () => Voice.stop()), this.btn('print stats', () => console.log('[voice]', JSON.stringify(Voice.stats), Voice.lastClip, Voice.log.slice(-10)))]));
     this.group('Run', [
       this.btn('new seed', () => g.restart(false)), this.btn('same seed', () => g.restart(true)),
       this.btn('solvability x10', () => this.solve()), this.btn('test mode (no pointer lock)', () => { g.testMode = !g.testMode; })

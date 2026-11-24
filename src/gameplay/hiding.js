@@ -99,9 +99,10 @@ class HideSpot extends Interactable {
     this.ghostHere = false;
   }
   promptText() {
-    if (this.game.hiding.active === this) return 'Leave ' + this.def.label.toLowerCase();
-    if (this.burned) return 'Hide in the ' + this.def.label.toLowerCase();
-    return 'Hide in the ' + this.def.label.toLowerCase();
+    const place = lc(T(this.def.label));
+    if (this.game.hiding.active === this) return T('Leave the {place}', { place });
+    // "Under the bed" / "Crawlspace" read as a position, the rest as a container
+    return this.def.type === 'under' ? T('Hide {place}', { place }) : T('Hide in the {place}', { place });
   }
   get burned() { return this.game.clockT < this.burnedUntil; }
   setOpen(v) { this.open = v; this.parts.apply(v); }

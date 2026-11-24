@@ -22,7 +22,7 @@ Object.assign(Ghost.prototype, {
     this.dwellT = 0; this.burstT = 0; this.openT = 0; this.lookT = 0; this.repathT = 0;
     this.checking = null; this.checksLeft = 0; this.safeT = 0;
     this.entering = 0; this.dormantT = 0; this.sinceNear = 0; this.lastNoise = null;
-    this.speedMul = 1; this.huntT = 0; this.resist = 0;
+    this.speedMul = 1; this.huntT = 0; this.resist = 0; this.wResist = 0; this.lightSlow = 1; this.revealT = 0; this.inLight = false;
     this.relicChase = false; this.relicT = 0; this.relicPhase = 0; this.relicFlags = {}; this.relicPulseT = 0;
   },
 
@@ -149,7 +149,8 @@ Object.assign(Ghost.prototype, {
     let see = false;
     if (this.inPlayerRoom() && !this.scripted && !(this.state === 'STUNNED')) {
       const d = this.distToPlayer();
-      let range = this.cfg.sight * (g.flashlightOn ? 1.15 : 0.85) * (g.isCrouching ? 0.65 : 1);
+      // a lit room shows you to her from further away
+      let range = this.cfg.sight * (g.flashlightOn ? 1.15 : 0.85) * (g.isCrouching ? 0.65 : 1) * (this.inLight ? CONFIG.light.sightBoost : 1);
       if (hid && !hid.compromised) range = 0;
       if (hid && hid.compromised) range = 99;
       if (d < range) {
@@ -226,7 +227,7 @@ Object.assign(Ghost.prototype, {
     // while it can see you it moves in jerky bursts (stop-motion)
     let mul = 1;
     if (this.state === 'HUNT' && this.sees) { this.burstT += dt; const ph = this.burstT % 0.4; mul = ph < 0.22 ? 1.7 : 0; }
-    const step = speed * mul * dt;
+    const step = speed * mul * (this.lightSlow || 1) * dt;
     if (d <= step + 0.05) { this.x = t.x; this.z = t.z; this.path.shift(); }
     else { this.x += (dx / d) * step; this.z += (dz / d) * step; }
     return !this.path.length;
@@ -265,15 +266,23 @@ Object.assign(Ghost.prototype, {
     this.routeDoors.shift(); this.pathStage = 0; this.path = [];
     const entering = this.inPlayerRoom();
     if (entering) {
-      // the far door opens by itself before it steps out
-      pair.snap(false); pair.open(false, true); this.entering = 1.0; this.group.visible = false;
-      g.flickerLights(2.0); g.audio.whisper({ x: pair.bx, y: 1.5, z: pair.bz }, 0.4);
+      // the door opens by itself, then you see her step through it (never a pop-in inside the room)
+      if (!pair.isOpen) { pair.snap(false); pair.open(false, true); }
+      this.entering = pair.isOpen && pair.t > 0.6 ? 0.05 : 0.35;
+      this.group.visible = false;
+      g.flickerLights(1.2); g.audio.whisper({ x: pair.bx, y: 1.5, z: pair.bz }, 0.4);
       g.fear.add(6);
     } else { pair.snap(true); }
     if (leaving && !entering) g.flickerLights(0.8);
     if (this.goal) {
       if (this.goal.room !== this.roomId) { const r = WORLD_DATA.roomPath(this.roomId, this.goal.room, g.unlocked); this.routeDoors = r || []; const d2 = r && r.length ? g.world.doors[r[0]] : null; if (d2) { const ap = d2.approach; this.path = this.room.nav.findPath(this.x, this.z, ap[0], ap[1]); } }
       else this.path = this.room.nav.findPath(this.x, this.z, this.goal.x, this.goal.z);
+    }
+    if (entering) {
+      // start on the threshold and walk in to where the route begins
+      const th = pair.toWorld(0, 0.1);
+      this.path.unshift({ x: a[0], z: a[1] });
+      this.x = th[0]; this.z = th[1];
     }
   },
 
@@ -301,6 +310,11 @@ Object.assign(Ghost.prototype, {
     if (!this.aiEnabled || this.scripted || g.isDead || g.hasWon) return;
     this.stateT += dt; this.stunCd -= dt; this.safeT -= dt;
     this.resist = Math.max(0, this.resist - dt * CONFIG.beam.resistDecay);
+    this.wResist = Math.max(0, this.wResist - dt * CONFIG.weapons.resist.decay);
+    // light: under a lit bulb (or a burning flare) she hunts more slowly
+    this.inLight = !!(g.power && (g.power.isLit(this.roomId) || (g.combat && g.combat.flareLit(this.roomId))));
+    this.lightSlow = this.inLight && this.state === 'HUNT' ? CONFIG.light.huntSlow : 1;
+    if (this.revealT > 0) this.revealT -= dt;
     this.sinceNear = this.distToPlayer() < 9 ? 0 : this.sinceNear + dt;
     const stage = g.stage, speedMul = (1 + stage * 0.07) * (g.midnight ? CONFIG.midnight.speed : 1);
     // after midnight the house tells her roughly where you are, every minute or so
@@ -321,6 +335,9 @@ Object.assign(Ghost.prototype, {
     }
     // reading the player's head: look toward noise, otherwise ahead
     this.P.headTilt = damp(this.P.headTilt, 0, 0.8, dt);
+    // in the dark she is harder to make out until she is on you; a flare drags her into view
+    if (this.revealT > 0) this.formTarget = Math.max(this.formTarget, 1.5);
+    else if (!this.inLight && this.inPlayerRoom() && (this.state === 'PATROL' || this.state === 'SUSPICIOUS') && this.distToPlayer() > 3) this.formTarget = Math.min(this.formTarget, 0.7);
     // death by contact
     if (this.inPlayerRoom() && !g.hiding.active && this.state === 'HUNT' && this.distToPlayer() < 1.15 && this.room.lineClear(this.x, this.z, this.px(), this.pz(), 0.1)) g.scares.death('ghost');
   },
@@ -369,10 +386,24 @@ Object.assign(Ghost.prototype, {
     const dx = this.x - this.px(), dz = this.z - this.pz(), d = Math.hypot(dx, dz) || 1;
     for (let s = 2.4; s > 0; s -= 0.4) { const nx = this.x + dx / d * s, nz = this.z + dz / d * s; if (!this.room.blocked(nx, nz, 0.4)) { this.x = nx; this.z = nz; break; } }
   },
+  // Weapons: stun (bat, pistol) or drive her back (crowbar, flare). Never kills her.
+  // Each hit makes the next weaker for a while. Returns true on effect, 'reeling' if already reeling.
+  weaponHit(kind, sec) {
+    const g = this.game, R = CONFIG.weapons.resist;
+    if (this.state === 'DORMANT' || this.scripted || !this.inPlayerRoom()) return false;
+    if (this.state === 'STUNNED' || this.state === 'REPELLED') return 'reeling';
+    const dur = Math.max(R.min, sec * (1 - this.wResist));
+    this.wResist = Math.min(R.max, this.wResist + R.gain);
+    if (kind === 'crowbar' || kind === 'flare') this.repel(dur); else this.stun(dur);
+    if (kind === 'flare') this.revealT = dur;
+    g.fear.add(-6); g.story.onGhostHit(); if (g.missions) g.missions.onGhostHit();
+    return true;
+  },
   tickStunned(dt) {
     this.stunT -= dt;
     this.dissolve = clamp(0.35 * Math.sin(this.time * 40) * 0.5 + 0.2, 0, 0.5);
     if (this.stunT <= 0) {
+      if (this.inPlayerRoom()) this.game.audio.ghostRecover({ x: this.x, y: 1.6, z: this.z });
       this.dissolve = 0; this.P.scream = 0; this.P.jaw = 0;
       this.lastKnown = { room: this.roomId, x: this.px(), z: this.pz(), t: this.game.clockT };
       this.beginSearch(10);
@@ -388,13 +419,15 @@ Object.assign(Ghost.prototype, {
   },
   tickRepelled(dt) {
     this.repelT -= dt; this.followRoute(dt, this.cfg.hunt * 0.9);
-    if (this.repelT <= 0) { this.P.scream = 0; this.beginSearch(8); }
+    if (this.repelT <= 0) { if (this.inPlayerRoom()) this.game.audio.ghostRecover({ x: this.x, y: 1.6, z: this.z }); this.P.scream = 0; this.beginSearch(8); }
   },
 
   // ---- PATROL: roams the whole house ----------------------------------------
   choosePatrolGoal() {
     const g = this.game, rooms = Object.values(g.world.rooms).filter(r => r.role !== 'safe' && r.id !== this.roomId);
-    const reach = rooms.filter(r => WORLD_DATA.roomPath(this.roomId, r.id, g.unlocked));
+    // lit rooms are uncomfortable: she mostly drifts toward the dark ones
+    let reach = rooms.filter(r => WORLD_DATA.roomPath(this.roomId, r.id, g.unlocked));
+    if (g.power) { const dark = reach.filter(r => !g.power.isLit(r.id) || this.game.rand() > CONFIG.light.patrolAvoid); if (dark.length) reach = dark; }
     if (!reach.length) return null;
     // the longer it has been since it was near you, the more it drifts toward your room
     const bias = clamp(this.sinceNear / 45, 0, 1) * 0.65 * this.cfg.aggression;

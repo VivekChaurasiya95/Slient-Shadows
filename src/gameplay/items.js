@@ -19,8 +19,22 @@ const ITEM_DEFS = {
   locket:     { name: 'Silver Locket', kind: 'locket', desc: 'A child\'s portrait inside. It calms the dead, once.' },
   doll:       { name: 'Porcelain Doll', kind: 'junk', desc: 'Its eyes are painted shut. Throw it to make noise.' },
   coins:      { name: 'Old Coins', kind: 'junk', desc: 'A handful of tarnished coins. Throw them to make noise.' },
-  note:       { name: 'Note', kind: 'note', desc: '' }
+  note:       { name: 'Note', kind: 'note', desc: '' },
+  // ---- weapons: none of them can kill her, they only buy time ----
+  bat:        { name: 'Baseball Bat', kind: 'weapon', weapon: 'bat', charges: 5, desc: 'An old bat wrapped in black tape. A solid hit staggers the ghost for a few seconds. It will splinter after a few hits.' },
+  crowbar:    { name: 'Crowbar', kind: 'weapon', weapon: 'crowbar', desc: 'Heavy iron, both ends bent. Pries open nailed boards and panels, and a swing drives her back for a moment.' },
+  flaregun:   { name: 'Flare Gun', kind: 'weapon', weapon: 'flaregun', ammo: 'flare', desc: 'A blinding flare confuses her and makes her retreat. It also lights up the dark. Very few shells.' },
+  pistol:     { name: 'Emergency Pistol', kind: 'weapon', weapon: 'pistol', ammo: 'pistol', desc: 'Only a few bullets. A hit stuns her. A miss tells her exactly where you are. Emergencies only.' },
+  flare_ammo: { name: 'Flare Shells', kind: 'ammo', ammo: 'flare', amount: 2, color: 0xc8402a, desc: 'Shells for the flare gun.' },
+  pistol_ammo: { name: 'Pistol Rounds', kind: 'ammo', ammo: 'pistol', amount: 2, color: 0xc9a24a, desc: 'Loose rounds for the pistol.' },
+  // ---- ritual offerings for the crypt altar ----
+  ritual_candle: { name: 'Black Candle', kind: 'ritual', glyph: 'moon', desc: 'Black wax, never lit. One of three offerings for the crypt altar.' },
+  ritual_salt:   { name: 'Grave Salt', kind: 'ritual', glyph: 'eye', desc: 'A pouch of coarse salt taken from a grave. An offering for the crypt altar.' },
+  ritual_ribbon: { name: 'Elspeth\u2019s Ribbon', kind: 'ritual', glyph: 'horn', desc: 'A faded hair ribbon. It belonged to the girl. An offering for the crypt altar.' }
 };
+
+// "Take crowbar" / "Crowbar uthao"
+function itemPrompt(item) { return item.def.kind === 'note' ? T('Read note') : T('Take {item}', { item: lc(T(item.def.name)) }); }
 
 // --------------------------------------------------------------------------
 // Meshes. Geometries and materials are cached and shared.
@@ -81,6 +95,8 @@ const ItemFactory = {
       M(cg, mat, 0, 0.003, 0); M(cg, mat, 0.04, 0.003, 0.02, 0, 0.5, 0); M(cg, mat, -0.01, 0.009, 0.03);
     } else if (def.kind === 'note') {
       M(Cache.geo('box.note', () => new THREE.BoxGeometry(0.16, 0.004, 0.2)), S.std('paper', 0xcfc29a, 0.95, 0), 0, 0.002, 0, 0, 0.3, 0);
+    } else if (typeof WeaponModels !== 'undefined' && WeaponModels.has(id)) {
+      WeaponModels.build(id, g, 'world');
     }
     g.userData.itemId = id;
     return g;
@@ -107,6 +123,7 @@ const ItemFactory = {
       else if (def.kind === 'locket') { x.strokeStyle = '#c8c8d0'; x.beginPath(); x.arc(32, 38, 12, 0, 7); x.stroke(); x.beginPath(); x.arc(32, 22, 18, 3.6, 5.8); x.stroke(); }
       else if (id === 'doll') { x.strokeStyle = '#e8e0d4'; x.beginPath(); x.arc(32, 16, 8, 0, 7); x.stroke(); x.beginPath(); x.moveTo(32, 24); x.lineTo(20, 54); x.lineTo(44, 54); x.closePath(); x.stroke(); }
       else if (id === 'coins') { x.strokeStyle = '#a08a40'; [[24, 36], [40, 32], [32, 22]].forEach(p => { x.beginPath(); x.arc(p[0], p[1], 10, 0, 7); x.stroke(); }); }
+      else if (typeof WeaponModels !== 'undefined' && WeaponModels.has(id)) WeaponModels.icon(id, x);
       return c.toDataURL();
     });
   }
@@ -136,6 +153,11 @@ class Inventory extends Emitter {
   add(item) {
     if (item.def.kind === 'note') {
       this.notes.push(item); this.emit('note', item); this.emit('change'); return 0;
+    }
+    // ammunition goes straight into the pouch, it never takes a slot
+    if (item.def.kind === 'ammo') {
+      if (this.game.combat) this.game.combat.addAmmo(item.def.ammo, item.def.amount);
+      this.emit('ammo', item); this.emit('change'); return 0;
     }
     const i = this.slots.indexOf(null);
     if (i < 0) return -1;
@@ -203,8 +225,9 @@ class WorldItem {
   pickUp() {
     const game = this.game;
     if (this.picking) return;
-    const inv = game.inventory;
-    if (this.item.def.kind !== 'note' && !inv.slots.includes(null)) { game.hud.toast('Your hands are full'); return; }
+    const inv = game.inventory, kind = this.item.def.kind;
+    if (game.canTake && !game.canTake(this.item, this)) return;
+    if (kind !== 'note' && kind !== 'ammo' && !inv.slots.includes(null)) { game.hud.toast('Your hands are full'); return; }
     this.picking = true;
     if (this.interactable) this.interactable.enabled = false;
     game.scene.attach(this.mesh);
@@ -226,8 +249,9 @@ class WorldItem {
         if (m.parent) m.parent.remove(m);
         const it = this.item;
         const idx = inv.add(it);
-        if (it.def.kind === 'note') game.hud.toast('Found a note'), game.hud.showNote(it);
-        else if (idx >= 0) game.hud.toast('Picked up: ' + it.def.name);
+        if (it.def.kind === 'note') game.hud.toast(it.clue ? 'Found a clue' : 'Found a note'), game.hud.showNote(it);
+        else if (it.def.kind === 'ammo') game.hud.toast(T('Picked up: {item}', { item: T(it.def.name) }) + ' (+' + game.combat.ammoGain(it.def) + ')');
+        else if (idx >= 0) game.hud.toast(T('Picked up: {item}', { item: T(it.def.name) }));
         game.onItemPickedUp(this);
       }
     });

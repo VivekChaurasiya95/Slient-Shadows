@@ -149,7 +149,7 @@ class Door extends Openable {
     if (this.lock && this.st === 'closed') {
       if (this.lock.type === 'barred') return 'Barred from the other side';
       if (this.lock.type === 'relic') return 'Sealed, needs the skull';
-      if (sel && sel.def.kind === 'key') return 'Unlock with ' + sel.def.name;
+      if (sel && sel.def.kind === 'key') return T('Unlock with {item}', { item: T(sel.def.name) });
       return 'Locked, needs a key';
     }
     if (st === 'jammed') return 'It will not budge';
@@ -177,7 +177,7 @@ class Door extends Openable {
     if (!keys.length) { g.audio.rattle(pos); g.hud.toast('Locked. You need a key'); g.makeNoise(this.bx, this.bz, this.room.id, 0.3, 'rattle'); return; }
     const sel = g.inventory.current;
     let key = sel && sel.def.kind === 'key' ? sel : null;
-    if (key && key.def.keyId !== L.keyId) { g.audio.rattle(pos); g.hud.toast('The ' + key.def.name.toLowerCase() + ' doesn\'t fit'); return; }
+    if (key && key.def.keyId !== L.keyId) { g.audio.rattle(pos); g.hud.toast(T('The {item} doesn\'t fit', { item: lc(T(key.def.name)) })); return; }
     if (!key) key = keys.find(k => k.def.keyId === L.keyId);
     if (!key) { g.audio.rattle(pos); g.hud.toast('None of your keys fit'); return; }
     this.unlock(); g.audio.unlock(pos);

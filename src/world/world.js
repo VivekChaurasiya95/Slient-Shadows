@@ -193,6 +193,9 @@ class World {
       const real = layout.hides.includes(h.id), fake = layout.fakeHide === h.id;
       if (real || fake) buildHide(this, this.rooms[h.room], h, fake);
     });
+    // wiring, bulbs and switches in every room; then the mission fixtures (locker, altar, door marks)
+    if (this.game.power) this.game.power.build(this);
+    if (this.game.missions) this.game.missions.build(this, layout);
     Object.values(this.rooms).forEach(room => {
       this.decorate(room);
       room.nav = new NavGrid(room);

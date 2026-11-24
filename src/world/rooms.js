@@ -75,16 +75,7 @@ Object.assign(World.prototype, {
     this.addMesh(room, Cache.geo('plane:3.4x2.4', () => new THREE.PlaneGeometry(3.4, 2.4)), this.texMat(rt, 1), -0.6, 0.012, -1.0, { rx: -Math.PI / 2, cast: false });
     this.addPainting(room, -4.93, 1.9, -2.2, Math.PI / 2, 0.8, 1.0, 0);
     this.addHangingBats(room, 2.5, room.H - 0.1, 1.5);
-    // a wall switch by the door that the player can flip to control a bare ceiling bulb
-    const swPlate = this.addBox(room, this.mat(0x202020, 0.5), 0.06, 0.18, 0.12, 4.86, 1.15, 5.0, false);
-    const swToggle = this.addBox(room, this.mat(0x0c0c0c, 0.5), 0.03, 0.1, 0.05, 4.8, 1.15, 5.0, false);
-    swToggle.rotation.z = -0.28;
-    this.addMesh(room, Cache.geo('bed.cord', () => new THREE.CylinderGeometry(0.008, 0.008, 0.5, 6)), this.mat(0x111111, 0.6), 0, 3.05, -0.6, { cast: false });
-    const bulbMat = new THREE.MeshBasicMaterial({ color: 0x2a2620 });
-    const bulbMesh = this.addMesh(room, Cache.geo('bed.bulb', () => new THREE.SphereGeometry(0.1, 12, 10)), bulbMat, 0, 2.75, -0.6, { cast: false });
-    const bulbLight = this.addLight(room, 0xffe9c2, 2.4, 12, 0, 2.7, -0.6, null);
-    room.lampSwitch = { plate: swPlate, toggle: swToggle, on: false, light: bulbLight, base: bulbLight.intensity, bulb: bulbMesh };
-    bulbLight.intensity = 0;
+    // the ceiling bulb and its wall switch are built by the PowerGrid (src/gameplay/power.js)
     room.lightLevel = 0.25;
   },
 
@@ -204,7 +195,7 @@ Object.assign(World.prototype, {
     const smokePos = new Float32Array(90 * 3);
     for (let i = 0; i < smokePos.length; i += 3) { smokePos[i] = (Math.random() - 0.5) * 8; smokePos[i + 1] = Math.random() * 1.6; smokePos[i + 2] = -2 + (Math.random() - 0.5) * 9; }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
-    const smoke = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x5dff9a, size: 0.09, transparent: true, opacity: 0.35, depthWrite: false }));
+    const smoke = new THREE.Points(geo, new THREE.PointsMaterial({ map: softDot(), color: 0x5dff9a, size: 0.12, transparent: true, opacity: 0.35, depthWrite: false }));
     smoke.frustumCulled = false; room.group.add(smoke);
     room.updaters.push((dt) => { const p = geo.attributes.position.array; for (let i = 1; i < p.length; i += 3) { p[i] += dt * 0.18; if (p[i] > 1.6) p[i] = 0; } geo.attributes.position.needsUpdate = true; });
     this.addSkullShelf(room, 4.6, 2.3, -3.6);
