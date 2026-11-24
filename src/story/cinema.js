@@ -110,11 +110,12 @@ class Cinema {
     g.renderer.domElement.style.filter = ctx.grade; g.renderer.toneMappingExposure = ctx.exposure;
     document.body.classList.add('cine-on'); this.el.layer.classList.add('on');
     this.el.skip.style.display = opts.skippable ? 'inline-flex' : 'none';
-    this.el.hint.textContent = opts.skippable ? 'Space or Esc to skip' : '';
-    this.el.begin.classList.remove('on'); this.el.begin.textContent = opts.endLabel || 'Begin';
+    this.el.hint.textContent = opts.skippable ? T('Space or Esc to skip') : '';
+    this.el.skip.textContent = T('Skip');
+    this.el.begin.classList.remove('on'); this.el.begin.textContent = T(opts.endLabel || 'Begin');
     this.el.fade.style.transitionDuration = '0s'; this.el.fade.style.opacity = 1; void this.el.fade.offsetWidth;
     this.el.fade.style.transitionDuration = '1.1s'; this.el.fade.style.opacity = 0;
-    g.audio.ensure(); Narrator.enabled = !!g.access.narration;
+    g.audio.ensure(); Voice.enabled = !!g.access.narration; Voice.stop();
     ctx.silent = false; ctx.step(0);
     if (opts.onStart) opts.onStart();
   }
@@ -130,18 +131,26 @@ class Cinema {
     }
   }
 
+  // Captions are stored in English and translated as they appear. Every speaker is voiced
+  // (queued, never interrupting) when narration is on; the caption text keeps its time window.
   updateOverlay(t) {
     const ctx = this.ctx, e = this.el;
     let cap = null; for (const c of ctx.captions) if (t >= c.t0 && t < c.t1) cap = c;
     if (cap) {
-      if (e.txt.textContent !== cap.text) {
-        e.txt.textContent = cap.text; e.who.textContent = cap.who === 'NARRATOR' ? '' : cap.who; e.cap.dataset.who = cap.who;
-        if (!cap.said && !ctx.silent && cap.who === 'NARRATOR') { cap.said = true; Narrator.enabled = !!this.game.access.narration; Narrator.speak(cap.text, 'NARRATOR', true); }
+      const shown = T(cap.text);
+      if (e.txt.textContent !== shown) {
+        e.txt.textContent = shown; e.who.textContent = cap.who === 'NARRATOR' ? '' : speakerLabel(cap.who); e.cap.dataset.who = cap.who;
+        if (!cap.said && !ctx.silent) {
+          cap.said = true; Voice.enabled = !!this.game.access.narration;
+          // the voice takes its place in the caption's window: it must start within the first 40%, and is sped up at most 10% to finish inside it
+          const win = Math.max(1, cap.t1 - cap.t0);
+          Voice.speak({ src: cap.text, text: shown, who: cap.who, fit: win - 0.35, maxWait: win * 400, cine: true });
+        }
       }
       e.cap.classList.add('on');
     } else e.cap.classList.remove('on');
     let ch = null; for (const c of ctx.chapters) if (t >= c.t0 && t < c.t1) ch = c;
-    if (ch) { if (e.ch2.textContent !== ch.title) { e.ch2.textContent = ch.title; e.cp.textContent = ch.sub || ''; e.ck.textContent = ch.kicker || ''; } e.chap.classList.add('on'); } else e.chap.classList.remove('on');
+    if (ch) { const title = T(ch.title); if (e.ch2.textContent !== title) { e.ch2.textContent = title; e.cp.textContent = ch.sub ? T(ch.sub) : ''; e.ck.textContent = ch.kicker ? T(ch.kicker) : ''; } e.chap.classList.add('on'); } else e.chap.classList.remove('on');
   }
 
   flashDom(pow) {
@@ -152,7 +161,7 @@ class Cinema {
   skip() { if (!this.active || this.ending || !this.opts.skippable) return; this.endWithFade(false); }
   begin() { if (!this.active || this.ending || !this.atEnd) return; this.endWithFade(true); }
   endWithFade(completed) {
-    if (this.ending) return; this.ending = true; Narrator.stop();
+    if (this.ending) return; this.ending = true; Voice.stop();
     this.el.fade.style.transitionDuration = (this.opts.fadeOut || 0.7) + 's'; this.el.fade.style.opacity = 1; this.el.begin.classList.remove('on');
     setTimeout(() => this.finish(completed), (this.opts.fadeOut || 0.7) * 1000 + 40);
   }
@@ -162,7 +171,7 @@ class Cinema {
     this.active = false; this.ctx = null; this.atEnd = false; this.ending = false; this.seeking = false;
     g.renderer.domElement.style.filter = this.savedFilter; g.renderer.toneMappingExposure = this.savedExposure;
     document.body.classList.remove('cine-on'); this.el.layer.classList.remove('on'); this.el.cap.classList.remove('on'); this.el.chap.classList.remove('on');
-    this.el.begin.classList.remove('on'); Narrator.stop();
+    this.el.begin.classList.remove('on'); Voice.stop();
     try { disposeTree(ctx.scene); } catch (e) { /* ignore */ }
     this.el.fade.style.transitionDuration = '0.6s'; this.el.fade.style.opacity = 0;
     if (!quiet && opts && opts.onDone) opts.onDone(completed);

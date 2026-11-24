@@ -180,8 +180,8 @@ class ScareDirector {
     add('bats', g.currentRoom === 'corridor' ? 1.6 : 0, () => g.scares.fakeout('bat'));
     add('pumpkin', 1, () => this.redPumpkins());
     add('thunder', 1.5, () => g.atmosphere.lightning());
-    add('shadow', st >= 1 ? 1.5 : 0, () => g.atmosphere.spawnPhantom());
-    if (!g.access.reduceScares && g.time - this.lastBig > (g.access.reduceScares ? 90 : 35)) {
+    // (no second "shadow figure": there is one ghost, and she only shows herself where she really is)
+    if (!g.access.reduceScares && g.time - this.lastBig > (g.access.reduceScares ? 90 : 35) && g.scares.ghostNear()) {
       add('mirror', g.room.mirror && st >= 1 ? 3 : 0, () => g.scares.mirror());
       add('corridor', g.currentRoom === 'corridor' && st >= 2 ? 3 : 0, () => g.scares.corridor(false));
       add('ceiling', st >= 2 && g.currentRoom !== 'corridor' ? 2.5 : 0, () => g.scares.ceiling(false));
@@ -198,6 +198,8 @@ class ScareDirector {
   real() {
     const g = this.game;
     if (g.scares.busy || g.hiding.active || g.isDead) return;
+    // she is not close enough to be the "real" scare: a sound from where she is instead
+    if (!g.scares.ghostNear()) { g.audio.whisper(this.behind(), 0.5); g.fear.add(5); return; }
     if (g.currentRoom === 'corridor') g.scares.corridor(false);
     else if (g.room.mirror) g.scares.mirror() || g.scares.ceiling(false);
     else g.scares.ceiling(false);
@@ -220,7 +222,7 @@ class ScareDirector {
   }
   hallucinate() {
     const g = this.game, k = Math.floor(g.rand() * 4);
-    if (k === 0) g.atmosphere.spawnPhantom();
+    if (k === 0) this.fakeDoor();
     else if (k === 1) { g.audio.doorSlam({ x: g.camera.position.x + 6, y: 1, z: g.camera.position.z - 6 }); g.audio.say('[A door slams somewhere]'); }
     else if (k === 2) g.audio.whisper(this.behind(), 0.6);
     else this.fakeDoor();

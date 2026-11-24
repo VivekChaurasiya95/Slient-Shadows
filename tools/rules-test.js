@@ -47,7 +47,7 @@ const srv = http.createServer((req, res) => {
     await page.mouse.click(400, 225); await page.waitForTimeout(500);
     const had = await page.evaluate(() => !!document.pointerLockElement);
     await page.evaluate(() => document.exitPointerLock()); await page.waitForTimeout(500);
-    const s1 = await page.evaluate(() => ({ paused: __game.paused, modal: document.getElementById('pause-modal').classList.contains('visible') }));
+    const s1 = await page.evaluate(() => ({ paused: __game.paused, modal: document.getElementById('pause-modal').classList.contains('visible'), hold: !!__game.clickHold, cine: __game.cinema.active, room: __game.currentRoom }));
     const ok1 = s1.paused && s1.modal; console.log((ok1 ? 'PASS ' : 'FAIL ') + 'losing the mouse pauses'.padEnd(34), JSON.stringify({ lockWasHeld: had, ...s1 })); ok1 ? pass++ : fail++;
     const before = await page.evaluate(() => __game.clockT); await page.waitForTimeout(1200);
     const after = await page.evaluate(() => __game.clockT);

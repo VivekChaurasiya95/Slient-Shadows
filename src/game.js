@@ -10,8 +10,11 @@ const ROOM_CUTSCENES = ['parlor', 'bedroom', 'kitchen', 'library', 'nursery', 'c
 class HorrorGame {
   constructor() {
     this.container = document.getElementById('game-container');
+    I18N.load();
     this.cfg = CONFIG.difficulties.normal;
-    this.access = { reduceFlashing: false, reduceScares: false, subtitles: true, narration: true };
+    // Spoken narration is off unless the player turns it on (Options). Dialogue and stories are read as text.
+    let narr = false; try { narr = localStorage.getItem('silentshadows.narration.v1') === '1'; } catch (e) { /* storage blocked */ }
+    this.access = { reduceFlashing: false, reduceScares: false, subtitles: true, narration: narr };
     this.keys = {}; this.isLocked = false;
     this.isPlaying = false; this.isDead = false; this.hasWon = false;
     this.transitioning = false; this.inputLocked = false; this.testMode = false; this.paused = false; this.midnight = false;
@@ -32,6 +35,7 @@ class HorrorGame {
     this.initThree();
     this.tweens = new Tweens();
     this.audio = new AudioEngine(this);
+    this.voice = Voice; Voice.attach(this);
     this.inventory = new Inventory(this);
     this.hud = new HUD(this);
     this.world = new World(this);
@@ -44,10 +48,15 @@ class HorrorGame {
     this.director = new ScareDirector(this);
     this.story = new StoryDirector(this);
     this.ghost = new Ghost(this);
+    this.power = new PowerGrid(this);
+    this.missions = new MissionSystem(this);
+    this.combat = new Combat(this);
+    this.canTake = item => this.missions.canTake(item);
     this.cinema = new Cinema(this);
     this.menu = new MenuScene(this);
     this.initHardware();
     this.initMenu();
+    this.initLanguage();
     this.setupEvents();
     this.newRun(null);
     this.warmup();
@@ -65,9 +74,10 @@ class HorrorGame {
     this.camera = new THREE.PerspectiveCamera(CONFIG.player.fov, innerWidth / innerHeight, 0.05, 80);
     this.camera.position.set(0, CONFIG.player.eye, 9);
     this.scene.add(this.camera);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false });
+    try { this.quality = localStorage.getItem('silentshadows.gfx.v1') || 'high'; } catch (e) { this.quality = 'high'; }
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.setSize(innerWidth, innerHeight);
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.85;
@@ -81,7 +91,9 @@ class HorrorGame {
     this.flashBase = 2.8;
     this.flashlight = new THREE.SpotLight(0xfff1dc, this.flashBase, 24, Math.PI / 6, 0.55, 1.3);
     this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.set(1024, 1024); this.flashlight.shadow.camera.near = 0.1; this.flashlight.shadow.camera.far = 24; this.flashlight.shadow.bias = -0.0004;
+    const sm = this.quality === 'high' ? 2048 : 1024; this.flashlight.shadow.mapSize.set(sm, sm); this.flashlight.shadow.camera.near = 0.1; this.flashlight.shadow.camera.far = 24; this.flashlight.shadow.bias = -0.0002;
+    // pushes the shadow lookup off the surface along its normal: no striped "shadow acne" when the beam grazes walls and floors
+    this.flashlight.shadow.normalBias = 0.025;
     this.flashTarget = new THREE.Object3D();
     this.scene.add(this.flashlight, this.flashTarget); this.flashlight.target = this.flashTarget;
     // faint glow around the player so nearby floor is never fully black
@@ -93,10 +105,26 @@ class HorrorGame {
     this.lightningLight = null;
     // dust motes that follow the player
     const n = 420, pos = new Float32Array(n * 3);
-    for (let i = 0; i < n * 3; i += 3) { pos[i] = (Math.random() - 0.5) * 8; pos[i + 1] = Math.random() * 3; pos[i + 2] = (Math.random() - 0.5) * 8; }
+    // (never right in front of your eyes, where a mote is drawn as a big block)
+    for (let i = 0; i < n * 3; i += 3) { do { pos[i] = (Math.random() - 0.5) * 8; pos[i + 2] = (Math.random() - 0.5) * 8; } while (Math.hypot(pos[i], pos[i + 2]) < 0.9); pos[i + 1] = Math.random() * 3; }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xb8b0a0, size: 0.02, transparent: true, opacity: 0.45, depthWrite: false }));
+    // soft round specks: plain points are hard-edged squares that read as broken pixels
+    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ map: softDot(), color: 0xb8b0a0, size: 0.022, transparent: true, opacity: 0.4, depthWrite: false }));
     this.dust.frustumCulled = false; this.scene.add(this.dust);
+  }
+
+  // Graphics quality: High renders at the screen's full sharpness (up to 2x on high-DPI screens) with
+  // crisp flashlight shadows; Balanced caps at 1.5x; Performance renders a little under 1x for slow GPUs.
+  pixelRatio() {
+    const dpr = window.devicePixelRatio || 1;
+    return this.quality === 'performance' ? Math.min(dpr, 1) * 0.85 : this.quality === 'balanced' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
+  }
+  setQuality(q) {
+    this.quality = q === 'balanced' || q === 'performance' ? q : 'high';
+    try { localStorage.setItem('silentshadows.gfx.v1', this.quality); } catch (e) { /* storage blocked */ }
+    this.renderer.setPixelRatio(this.pixelRatio()); this.renderer.setSize(innerWidth, innerHeight);
+    const sm = this.quality === 'high' ? 2048 : 1024, sh = this.flashlight.shadow;
+    if (sh.mapSize.x !== sm) { sh.mapSize.set(sm, sm); if (sh.map) { sh.map.dispose(); sh.map = null; } }
   }
 
   // Compile every room's shader variant once, behind the menu, so room changes never hitch
@@ -104,6 +132,10 @@ class HorrorGame {
     const rooms = Object.values(this.world.rooms), keep = this.room;
     rooms.forEach(r => { rooms.forEach(o => { o.group.visible = o === r; }); this.renderer.compile(this.scene, this.camera); this.renderer.render(this.scene, this.camera); });
     rooms.forEach(o => { o.group.visible = o === keep; });
+    // weapon viewmodels: build and compile them once so the first draw never hitches
+    ['bat', 'crowbar', 'flaregun', 'pistol'].forEach(id => { this.combat.model(id).visible = true; });
+    this.combat.rig.matrix.copy(this.camera.matrixWorld); this.renderer.compile(this.combat.viewScene, this.camera);
+    Object.values(this.combat.models).forEach(m => { m.visible = false; });
     // the opening cutscene is built and compiled now, so pressing Begin the night never stalls
     try { this.cinema.prepare('opening'); } catch (e) { console.warn('opening prepare failed', e); }
   }
@@ -140,7 +172,8 @@ class HorrorGame {
     cam.quaternion.setFromEuler(TMP.e1);
     const fov = this.baseFov + (this.isSprinting ? CONFIG.player.sprintFov - CONFIG.player.fov : 0) * 1 + (this.hiding.active ? -8 : 0);
     if (!this.tweens.list.some(tw => tw.key === 'deathfov')) {
-      cam.fov = damp(cam.fov, fov, 6, dt); cam.updateProjectionMatrix();
+      const nf = Math.abs(cam.fov - fov) < 0.01 ? fov : damp(cam.fov, fov, 6, dt);
+      if (nf !== cam.fov) { cam.fov = nf; cam.updateProjectionMatrix(); }
     }
   }
 
@@ -169,7 +202,7 @@ class HorrorGame {
   // ------------------------------------------------------------------------
   setupEvents() {
     this.container.addEventListener('click', () => {
-      if (!this.isLocked && this.isPlaying && !this.isDead && !this.hasWon && !this.hud.noteOpen && !this.paused) this.container.requestPointerLock();
+      if (!this.isLocked && this.isPlaying && !this.isDead && !this.hasWon && !this.hud.noteOpen && (!this.paused || this.clickHold)) this.container.requestPointerLock();
     });
     document.addEventListener('pointerlockchange', () => {
       this.isLocked = document.pointerLockElement === this.container;
@@ -177,7 +210,7 @@ class HorrorGame {
       if (!this.isLocked) { if (this.shouldPauseOnUnlock()) this.pause(); }
       else if (this.paused) this.resume();
     });
-    document.addEventListener('pointerlockerror', () => { if (this.paused) document.getElementById('pause-sub').textContent = 'The browser needs a moment. Click Resume again'; });
+    document.addEventListener('pointerlockerror', () => { if (this.paused) document.getElementById('pause-sub').textContent = T('The browser needs a moment. Click Resume again'); });
     document.addEventListener('visibilitychange', () => { if (document.hidden && !this.testMode) this.pause(true); });
     document.addEventListener('mousemove', e => {
       if (!(this.isLocked || this.testMode) || this.look || this.inputLocked) return;
@@ -202,9 +235,9 @@ class HorrorGame {
       if (e.code === 'KeyE') this.pressInteract();
       if (e.code === 'KeyR') this.useSelected();
       if (e.code === 'KeyQ') this.dropSelected(e.shiftKey);
-      if (/^Digit[1-6]$/.test(e.code)) this.inventory.select(Number(e.code.slice(5)) - 1);
+      if (/^Digit[1-8]$/.test(e.code)) this.inventory.select(Number(e.code.slice(5)) - 1);
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.hiding.active && !this.inputLocked) {
-        this.isCrouching = !this.isCrouching; document.getElementById('stance-indicator').textContent = this.isCrouching ? 'Crouching' : 'Standing';
+        this.isCrouching = !this.isCrouching; this.paintStance();
       }
       if (e.code === 'KeyF' && !this.hiding.active) {
         this.flashlightOn = !this.flashlightOn; this.audio.click();
@@ -216,11 +249,14 @@ class HorrorGame {
     });
     window.addEventListener('mousedown', e => {
       if (!this.isLocked) return;
-      if (e.button === 0) this.pressInteract(); else if (e.button === 2) this.useSelected();
+      // left click swings or fires a weapon in hand, unless something interactable is under the reticle
+      if (e.button === 0) { if (this.combat.wantsAttack()) this.combat.attack(); else this.pressInteract(); }
+      else if (e.button === 2) this.useSelected();
     });
     window.addEventListener('mouseup', e => { if (e.button === 0) this.interact.release(); });
     window.addEventListener('contextmenu', e => e.preventDefault());
-    window.addEventListener('resize', () => { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(innerWidth, innerHeight); });
+    // (the pixel ratio is re-read too: moving the window to another monitor keeps it sharp)
+    window.addEventListener('resize', () => { this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setPixelRatio(this.pixelRatio()); this.renderer.setSize(innerWidth, innerHeight); });
     window.addEventListener('blur', () => { this.keys = {}; if (!this.testMode) this.pause(true); });
   }
 
@@ -234,17 +270,25 @@ class HorrorGame {
     if (this.paused || !this.isPlaying || this.isDead || this.hasWon || this.cinema.active) return;
     this.paused = true; this.keys = {}; this.interact.cancelPending();
     if (this.audio.ctx) this.audio.ctx.suspend();
-    document.getElementById('pause-sub').textContent = 'Nothing moves while you are away';
-    document.getElementById('pause-stats').textContent = 'Time  ' + document.getElementById('hud-clock').textContent + '\nSeed  ' + this.seed;
+    Voice.pause();
+    this.paintPause();
     this.hud.showModal(document.getElementById('pause-modal'));
     if (releaseLock && document.pointerLockElement) document.exitPointerLock();
   }
+  paintPause() {
+    document.getElementById('pause-sub').textContent = T('Nothing moves while you are away');
+    document.getElementById('pause-stats').textContent = T('Time') + '  ' + document.getElementById('hud-clock').textContent + '\n' + T('Seed') + '  ' + this.seed;
+  }
   resume() {
     if (!this.paused) return;
-    this.paused = false; this.hud.hideModal(document.getElementById('pause-modal'));
+    this.paused = false;
+    if (this.clickHold) { this.clickHold = false; document.getElementById('click-resume').classList.remove('on'); }
+    else this.hud.hideModal(document.getElementById('pause-modal'));
     if (this.audio.ctx) this.audio.ctx.resume();
+    Voice.resume();
     this.clock.getDelta();
   }
+  paintStance() { document.getElementById('stance-indicator').textContent = T(this.isCrouching ? 'Crouching' : 'Standing'); }
   resumeClicked() {
     if (this.testMode || document.pointerLockElement === this.container) { this.resume(); return; }
     this.container.requestPointerLock();
@@ -275,7 +319,8 @@ class HorrorGame {
   }
 
   updateMovement(dt) {
-    if (!this.canAct() || this.hiding.active) { this.isSprinting = false; this.updateStamina(dt, false); return; }
+    if (!this.vel) this.vel = new THREE.Vector3();
+    if (!this.canAct() || this.hiding.active) { this.vel.set(0, 0, 0); this.isSprinting = false; this.updateStamina(dt, false); return; }
     const k = this.keys, P = CONFIG.player;
     const wantsMove = !!(k.KeyW || k.KeyA || k.KeyS || k.KeyD || k.ArrowUp || k.ArrowDown || k.ArrowLeft || k.ArrowRight);
     this.isSprinting = !!(k.ShiftLeft || k.ShiftRight) && !this.isCrouching && !this.winded && this.stamina > 0 && wantsMove;
@@ -287,12 +332,18 @@ class HorrorGame {
     const fwd = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion); fwd.y = 0; fwd.normalize();
     const right = TMP.v2.set(1, 0, 0).applyQuaternion(this.camera.quaternion); right.y = 0; right.normalize();
     const mv = TMP.v3.set(0, 0, 0); if (mz) mv.addScaledVector(fwd, mz); if (mx) mv.addScaledVector(right, mx);
+    // velocity eases toward the input (about 0.1 s to full speed, a little quicker to stop): smooth, still responsive
+    const wants = mv.lengthSq() > 0, p = this.camera.position;
+    if (wants) mv.normalize().multiplyScalar(speed);
+    const v = this.vel; v.lerp(mv, 1 - Math.exp(-(wants ? 14 : 20) * dt));
+    if (v.lengthSq() < 1e-4) v.set(0, 0, 0);
     let moving = false;
-    if (mv.lengthSq() > 0) {
-      mv.normalize().multiplyScalar(speed * dt);
-      const p = this.camera.position, nx = p.x + mv.x, nz = p.z + mv.z;
-      if (this.canStandAt(nx, p.z)) p.x = nx;
-      if (this.canStandAt(p.x, nz)) p.z = nz;
+    if (v.lengthSq() > 0) {
+      const nx = p.x + v.x * dt, nz = p.z + v.z * dt;
+      if (this.canStandAt(nx, p.z)) p.x = nx; else v.x = 0;
+      if (this.canStandAt(p.x, nz)) p.z = nz; else v.z = 0;
+    }
+    if (wants) {
       moving = true;
       this.headBob += dt * (this.isSprinting ? 12 : this.isCrouching ? 6 : 8);
       const now = performance.now(), interval = this.isSprinting ? 320 : this.isCrouching ? 700 : 480;
@@ -321,12 +372,15 @@ class HorrorGame {
   animate() {
     requestAnimationFrame(() => this.animate());
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    // the voice keeps its own timing in game seconds: frozen while paused, running during cutscenes
+    if (!this.paused) Voice.update(dt);
     // a cutscene or the menu backdrop takes over the renderer: same context, different scene and camera
     if (this.cinema && this.cinema.active) { this.cinema.update(dt); if (this.cinema.ctx) this.renderer.render(this.cinema.ctx.scene, this.cinema.ctx.camera); return; }
     if (this.menu && this.menu.active && this.menu.built) { this.menu.update(dt); this.renderer.render(this.menu.scene, this.menu.camera); return; }
     this.step(dt);
     if (this.room && this.room.mirror) renderMirror(this, this.room.mirror);
     this.renderer.render(this.scene, this.camera);
+    this.combat.renderView(this.renderer, this.camera);
   }
 
   step(dt) {
@@ -347,9 +401,14 @@ class HorrorGame {
       this.checkExitApproach();
       this.director.update(dt);
       this.fear.update(dt);
+      this.missions.update(dt);
     }
     this.ghost.update(dt);
-    Object.values(this.world.doors).forEach(d => d.update(dt));
+    this.power.update(dt);
+    this.combat.update(dt);
+    if (this.doorSrc !== this.world.doors) { this.doorSrc = this.world.doors; this.doorList = Object.values(this.world.doors); }
+    const doors = this.doorList;
+    for (let i = 0; i < doors.length; i++) doors[i].update(dt);
     this.room.updaters.forEach(fn => fn(dt, this.time));
     this.atmosphere.update(dt);
     this.updateFlashlight(dt);
@@ -375,8 +434,10 @@ class HorrorGame {
     this.audio.setState(this.fear.v, this.stage / 3, pres, pan);
     this.audio.update(dt, this.camera);
     this.bpmT = (this.bpmT || 0) - dt;
-    if (this.bpmT <= 0) { this.bpmT = 1.1; document.getElementById('hud-bpm').textContent = Math.round(66 + this.fear.v * 0.95 + Math.random() * 4) + ' bpm'; }
-    document.getElementById('fear-fill').style.width = this.fear.v.toFixed(0) + '%';
+    if (!this.domBpm) { this.domBpm = document.getElementById('hud-bpm'); this.domFear = document.getElementById('fear-fill'); }
+    if (this.bpmT <= 0) { this.bpmT = 1.1; this.domBpm.textContent = Math.round(66 + this.fear.v * 0.95 + Math.random() * 4) + ' bpm'; }
+    // only touch the layout when the bar actually changes
+    const fw = this.fear.v.toFixed(0); if (fw !== this.lastFearW) { this.lastFearW = fw; this.domFear.style.width = fw + '%'; }
   }
 
   // Called from the Begin / Skip click, so pointer lock is allowed here
@@ -407,9 +468,13 @@ class HorrorGame {
   startMidnight() {
     this.midnight = true; this.warned4 = this.warned5 = this.warned6 = false;
     this.story.midnightToll();
-    // the quiet rooms are not quiet any more, and the cellar lamp dies
-    Object.values(this.world.rooms).forEach(r => { if (r.role === 'safe') { r.role = 'hostile'; r.lightLevel = Math.min(r.lightLevel, 0.25); } });
-    const fb = this.world.rooms.cellar.fuseBox; if (fb && fb.lamp) { fb.lamp.intensity = 0; fb.powered = false; }
+    // the quiet rooms are not quiet any more, and the whole house loses power for a few seconds
+    Object.values(this.world.rooms).forEach(r => {
+      if (r.role !== 'safe') return;
+      r.role = 'hostile'; r.lightLevel = Math.min(r.lightLevel, 0.25);
+      if (r.baseLight !== undefined) r.baseLight = Math.min(r.baseLight, 0.25);
+    });
+    this.power.blackout(7); this.audio.buzz(null, 1.2);
     this.ghost.dormantT = 0; this.ghost.senseT = 20;
     this.tweens.after(2.5, () => { this.hud.toast('The quiet rooms are not quiet any more'); this.hud.alert('The house is awake'); });
     this.tweens.after(6.5, () => this.hud.toast('She can feel where you are'));
@@ -424,6 +489,7 @@ class HorrorGame {
   updateClock() {
     const m = Math.floor(this.gameMinutes()), total = 23 * 60 + m, day = total >= 1440, mm = total % 1440, h24 = Math.floor(mm / 60), min = mm % 60;
     const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    // a VHS camcorder timestamp: kept in its own format in every language
     this.hud.setClock((day ? 'Nov 1 1998 ' : 'Oct 31 1998 ') + h12 + ':' + String(min).padStart(2, '0') + (h24 >= 12 ? ' PM' : ' AM'));
   }
 
@@ -438,14 +504,14 @@ class HorrorGame {
     this.rng = new RNG(seed + ':events'); this.frng = new RNG(seed + ':frame');
     this.prevLayout = { relicSpot: layout.relicSpot, keySpots: layout.keySpots };
     this.tweens.cancelAll(); this.atmosphere.phantomClear();
+    this.combat.reset(); Voice.stop();
     this.world.build(layout);
-    this.setupExtras();
     this.inventory.reset(); this.hiding.reset(); this.director.reset(); this.atmosphere.reset(); this.fear.reset();
     this.scares.saved = null; this.scares.busy = false; this.scares.exitDone = false;
     this.unlocked = new Set(); this.looseItems = []; this.seenCuts = new Set(); this.pendingCut = null;
     this.isDead = false; this.hasWon = false; this.inputLocked = false; this.transitioning = false; this.redAlert = false; this.look = null;
     this.lie = null; this.lieT = 8; this.lieWarned = false;
-    this.midnight = false; this.paused = false; this.stamina = 1; this.winded = false; this.sprintHold = 0;
+    this.midnight = false; this.paused = false; this.clickHold = false; document.getElementById('click-resume').classList.remove('on'); this.stamina = 1; this.winded = false; this.sprintHold = 0;
     this.battery = 100; this.lighterOn = false; this.flashlightOn = true; this.isCrouching = false; this.clockT = 0; this.stage = 0; this.relicTaken = false;
     this.camHeight = CONFIG.player.eye;
     this.hud.setBattery(100); this.hud.setHidden(false); this.hud.blackout(false);
@@ -456,7 +522,8 @@ class HorrorGame {
     this.camera.position.set(0, CONFIG.player.eye, 9); this.euler.set(0, 0, 0, 'YXZ');
     this.updateObjective();
     const s = document.getElementById('menu-seed'); if (s) s.placeholder = seed;
-    document.getElementById('hud-seed').textContent = 'Seed ' + seed;
+    document.getElementById('hud-seed').textContent = T('Seed') + ' ' + seed;
+    this.paintStance();
     console.log('[run] seed', seed, 'relic', layout.relicSpot, 'keys', JSON.stringify(layout.keySpots), 'locks', JSON.stringify(layout.keyForSlot));
   }
 
@@ -468,6 +535,7 @@ class HorrorGame {
     this.ambient.color.setHex(room.def.ambient[0]); this.ambient.intensity = room.def.ambient[1] * 0.3;
     this.audio.setRoom(room);
     this.interact.clearFocus(); this.interact.cancelPending();
+    if (this.vel) this.vel.set(0, 0, 0);
     if (arrivalDoor) {
       const s = arrivalDoor.spawn;
       this.camera.position.set(s[0], this.eyeHeight(), s[1]);
@@ -477,7 +545,7 @@ class HorrorGame {
     if (prev && prev !== room) this.ghost.onPlayerRoomChange(prev.id, roomId);
     if (this.isPlaying && prev !== room) this.story.onRoom(roomId);
     // first visit to a room: its flashback plays once nothing dangerous is happening
-    if (this.isPlaying && prev !== room) this.pendingCut = (ROOM_CUTSCENES.includes(roomId) && !this.seenCuts.has(roomId) && !this.relicTaken) ? { id: roomId, door: arrivalDoor } : null;
+    if (this.isPlaying && prev !== room) this.pendingCut = (ROOM_CUTSCENES.includes(roomId) && !this.seenCuts.has(roomId) && !RoomStoryFlag.seen(roomId) && !this.relicTaken) ? { id: roomId, door: arrivalDoor } : null;
     this.updateObjective();
     if (room.trap && !room.trapDone && arrivalDoor && this.isPlaying) {
       if (this.pendingCut && this.pendingCut.id === roomId) room.trapAfterCut = arrivalDoor;   // the flashback goes first, then the trap
@@ -505,16 +573,26 @@ class HorrorGame {
     if (this.canPlayCutscene()) this.playRoomCutscene(pc);
   }
   playRoomCutscene(pc) {
-    this.pendingCut = null; this.seenCuts.add(pc.id);
+    this.pendingCut = null; this.seenCuts.add(pc.id); RoomStoryFlag.mark(pc.id);
     this.inputLocked = true; this.keys = {}; this.interact.cancelPending(); this.interact.clearFocus(); this.hud.setPrompt(null, false); this.hud.clearRadio();
     this.cinema.play(pc.id, { skippable: true, fadeOut: 0.6, onDone: () => this.endRoomCutscene(pc) });
   }
   endRoomCutscene(pc) {
     this.inputLocked = false; this.clock.getDelta(); this.keys = {};
     const room = this.world.rooms[pc.id];
-    // Esc leaves pointer lock: show the pause menu now that the scene is over
-    if (!this.isLocked && !this.testMode && !this.isDead) this.pause(false);
+    // Skipping with Esc makes the browser release the mouse. That is not a request to pause:
+    // go straight back to the house. Try to take the mouse back at once (works after a click or Space);
+    // if the browser wants a click first, hold the world still behind a small "click to continue" hint.
+    if (!this.isLocked && !this.testMode && !this.isDead) { this.holdForClick(); try { this.container.requestPointerLock(); } catch (e) { /* needs a click */ } }
     if (room && room.trapAfterCut) { const d = room.trapAfterCut; room.trapAfterCut = null; this.fireTrap(room, d); }
+  }
+  // Frozen like a pause (nothing moves, so she cannot catch you), but no menu: one click resumes.
+  holdForClick() {
+    if (this.paused || !this.isPlaying || this.isDead || this.hasWon) return;
+    this.paused = true; this.clickHold = true; this.keys = {}; this.interact.cancelPending();
+    if (this.audio.ctx) this.audio.ctx.suspend();
+    Voice.pause();
+    document.getElementById('click-resume').classList.add('on');
   }
 
   // Walk through an open doorway: ease to black, swap rooms, ease back in
@@ -541,6 +619,9 @@ class HorrorGame {
       room.dark = true; this.hud.toast('The air is wrong in here');
       this.tweens.after(14, () => { room.dark = false; });
       for (let i = 0; i < 4; i++) this.tweens.after(1 + i * 2.2, () => this.audio.whisper(this.director.behind(), 0.5));
+    } else if (kind === 'ghostwait' && !this.scares.ghostNear()) {
+      // she is not near enough to be waiting in here: the room only sounds like she was
+      const d = room.doors[0]; this.audio.growl(d ? { x: d.bx, y: 1.4, z: d.bz } : null); this.flickerLights(1.2); this.fear.add(10);
     } else if (kind === 'ghostwait') {
       const gh = this.ghost; this.scares.beginScript();
       const far = room.waypoints.slice().sort((a, b) => dist2D(b.x, b.z, this.camera.position.x, this.camera.position.z) - dist2D(a.x, a.z, this.camera.position.x, this.camera.position.z))[0];
@@ -565,14 +646,8 @@ class HorrorGame {
     if (st !== this.stage) { this.stage = st; this.hud.toast(['', 'The house stirs', 'Something is hunting for you', 'It is awake'][st] || ''); this.scene.fog.density = this.room.def.fog[1] * 1.6 * (1 + st * 0.12); }
   }
 
-  updateObjective() {
-    let t;
-    if (this.hasRelic) t = 'Run to the front door';
-    else if (this.unlocked.size >= 3) t = 'Find the horned skull';
-    else if (this.hasKey) t = 'You hold a key. Something here is locked';
-    else t = 'Search the house for keys, and a way into the crypt';
-    this.hud.setObjective(t);
-  }
+  // The objective comes from the mission chain (src/gameplay/missions.js), read from live game state
+  updateObjective() { if (this.missions) this.missions.refresh(); }
 
   // ------------------------------------------------------------------------
   // Events from the interaction layer
@@ -594,6 +669,7 @@ class HorrorGame {
   }
   onItemPickedUp(wi) {
     const it = wi.item, g = this;
+    this.missions.onPickup(it); this.combat.onPickup(it);
     this.story.onPickup(it);
     this.looseItems = this.looseItems.filter(x => x !== wi);
     this.updateObjective();
@@ -612,7 +688,7 @@ class HorrorGame {
     this.hasWon = true; this.story.onEscaped(); this.audio.setChase(false); this.audio.stopAmbience(3); document.exitPointerLock();
     this.hud.fade(true, 900);
     this.tweens.after(1.0, () => {
-      document.getElementById('win-stats').textContent = 'Escape time  ' + this.formatElapsed() + '\nSeed  ' + this.seed;
+      this.endScreen = { kind: 'win' }; this.paintEndScreen();
       this.hud.showModal(document.getElementById('victory-modal')); this.hud.fade(false, 100);
     });
   }
@@ -620,17 +696,25 @@ class HorrorGame {
     this.story.onDeath();
     this.audio.setChase(false); this.audio.stopAmbience(1.5); document.exitPointerLock();
     const lines = DEATH_TEXT[type] || DEATH_TEXT.ghost;
-    document.querySelector('#game-over-modal .end-title').textContent = type === 'dawn' ? 'Dawn' : 'You died';
-    document.getElementById('btn-retry').textContent = 'New house';
-    document.getElementById('death-sub').textContent = lines[Math.floor(Math.random() * lines.length)];
-    document.getElementById('death-stats').textContent = (type === 'dawn' ? 'Night survived  ' : 'Time survived  ') + this.formatElapsed() + '\nSeed  ' + this.seed;
+    this.endScreen = { kind: 'death', type, line: lines[Math.floor(Math.random() * lines.length)] };
+    this.paintEndScreen();
     this.hud.showModal(document.getElementById('game-over-modal'));
+  }
+  // end screens are painted from English source text so a language switch can repaint them
+  paintEndScreen() {
+    const e = this.endScreen; if (!e) return;
+    if (e.kind === 'win') { document.getElementById('win-stats').textContent = T('Escape time') + '  ' + this.formatElapsed() + '\n' + T('Seed') + '  ' + this.seed; return; }
+    document.querySelector('#game-over-modal .end-title').textContent = T(e.type === 'dawn' ? 'Dawn' : 'You died');
+    document.getElementById('btn-retry').textContent = T('New house');
+    document.getElementById('death-sub').textContent = T(e.line);
+    document.getElementById('death-stats').textContent = T(e.type === 'dawn' ? 'Night survived' : 'Time survived') + '  ' + this.formatElapsed() + '\n' + T('Seed') + '  ' + this.seed;
   }
   formatElapsed() { const s = Math.round(this.clockT); return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's'; }
 
   // Retry without reloading: tear down and rebuild with a new (or the same) seed
   restart(sameSeed) {
     ['game-over-modal', 'victory-modal'].forEach(id => this.hud.hideModal(document.getElementById(id)));
+    this.endScreen = null;
     const seed = sameSeed ? this.seed : null;
     this.prevLayout = sameSeed ? null : this.prevLayout;
     this.newRun(seed);
@@ -647,6 +731,8 @@ class HorrorGame {
     if (!it || this.hiding.busy) return;
     if (this.interact.use()) return;
     const gh = this.ghost, k = it.def.kind, hud = this.hud, p = this.camera.position;
+    if (k === 'weapon') { if (!this.hiding.active) this.combat.attack(); return; }
+    if (k === 'ritual') { hud.toast('An offering. It belongs on the crypt altar'); return; }
     const near = gh.inPlayerRoom() && gh.state !== 'DORMANT' && gh.distToPlayer();
     if (k === 'battery') {
       if (this.battery > 92) { hud.toast('The flashlight is nearly full'); return; }
@@ -660,10 +746,10 @@ class HorrorGame {
     } else if (k === 'mirror') {
       if (it.charges <= 0) return;
       it.charges--; inv.emit('change');
-      let msg = 'Nothing in the glass';
+      let msg = T('Nothing in the glass');
       if (gh.state !== 'DORMANT') {
-        if (gh.inPlayerRoom()) { const dx = gh.x - p.x, dz = gh.z - p.z, f = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion), r = TMP.v2.set(1, 0, 0).applyQuaternion(this.camera.quaternion); const fa = dx * f.x + dz * f.z, ra = dx * r.x + dz * r.z; msg = 'In the glass: ' + (Math.abs(fa) > Math.abs(ra) ? (fa > 0 ? 'ahead of you' : 'behind you') : (ra > 0 ? 'to your right' : 'to your left')) + ', ' + Math.round(Math.hypot(dx, dz)) + ' m away'; }
-        else msg = 'In the glass: it is in the ' + gh.room.def.name.toLowerCase(); }
+        if (gh.inPlayerRoom()) { const dx = gh.x - p.x, dz = gh.z - p.z, f = TMP.v1.set(0, 0, -1).applyQuaternion(this.camera.quaternion), r = TMP.v2.set(1, 0, 0).applyQuaternion(this.camera.quaternion); const fa = dx * f.x + dz * f.z, ra = dx * r.x + dz * r.z; msg = T('In the glass: {where}, {m} m away', { where: T(Math.abs(fa) > Math.abs(ra) ? (fa > 0 ? 'ahead of you' : 'behind you') : (ra > 0 ? 'to your right' : 'to your left')), m: Math.round(Math.hypot(dx, dz)) }); }
+        else msg = T('In the glass: it is in the {room}', { room: lc(T(gh.room.def.name)) }); }
       hud.toast(msg); this.audio.click(); if (it.charges <= 0) { inv.removeItem(it); hud.toast('The shard slips and shatters'); this.audio.glass(null); }
     } else if (k === 'musicbox') {
       inv.removeItem(it); const wi = this.spawnLoose(it, p.x + 0, 0.06, p.z, null, true);
@@ -682,7 +768,7 @@ class HorrorGame {
     const vel = throwIt ? new THREE.Vector3(f.x * 7.5, f.y * 7.5 + 2.2, f.z * 7.5) : new THREE.Vector3(f.x * 0.8, 0.5, f.z * 0.8);
     const wi = this.spawnLoose(it, p.x + f.x * 0.5, p.y - 0.25, p.z + f.z * 0.5, vel);
     wi.throwLoud = throwIt ? CONFIG.loudness.thrown : CONFIG.loudness.drop * 0.5;
-    this.hud.toast((throwIt ? 'Threw ' : 'Dropped ') + it.def.name.toLowerCase());
+    this.hud.toast(T(throwIt ? 'Threw {item}' : 'Dropped {item}', { item: lc(T(it.def.name)) }));
   }
 
   spawnLoose(item, x, y, z, vel, still) {
@@ -690,7 +776,7 @@ class HorrorGame {
     wi.attach(this.room.group, x, y, z); wi.room = this.room; wi.vel = vel || null; wi.spin = Math.random() * 6; wi.throwLoud = 0.4;
     const hit = new THREE.Mesh(Cache.geo('hit.sph', () => new THREE.SphereGeometry(0.22, 8, 6)), Cache.mat('hit.mat', () => new THREE.MeshBasicMaterial({ visible: false }))); hit.position.y = 0.08; wi.mesh.add(hit);
     const meshes = []; wi.mesh.traverse(o => { if (o.isMesh) meshes.push(o); });
-    wi.interactable = new Interactable(this, { id: 'loose' + item.uid, room: this.room, meshes, reach: 2.8, prompt: () => (item.def.kind === 'note' ? 'Read note' : 'Take ' + item.def.name.toLowerCase()), onInteract: () => wi.pickUp() });
+    wi.interactable = new Interactable(this, { id: 'loose' + item.uid, room: this.room, meshes, reach: 2.8, prompt: () => itemPrompt(item), onInteract: () => wi.pickUp() });
     wi.interactable.enabled = !vel;
     this.looseItems.push(wi);
     return wi;
@@ -718,40 +804,22 @@ class HorrorGame {
     }
   }
 
-  // The cellar fuse box accepts the fuse and powers an emergency lamp
-  setupExtras() {
-    const game = this;
-    // cellar fuse box (existing)
-    const cellar = this.world.rooms.cellar, fb = cellar && cellar.fuseBox;
-    if (fb) {
-      fb.ia = new Interactable(this, { id: 'fusebox', room: cellar, meshes: [fb.mesh], reach: 2.8,
-        prompt: () => (fb.powered ? 'The fuse box hums' : 'A fuse is missing'),
-        onInteract: () => { if (fb.powered) return; const f = game.inventory.slots.find(s => s && s.id === 'fuse'); if (!f) game.hud.toast('A fuse is missing'); else game.fuseBoxUse(f); },
-        onUse: it => { if (it && it.id === 'fuse' && !fb.powered) { game.fuseBoxUse(it); return true; } return false; } });
-    }
-    // bedroom light switch: flip it to turn the ceiling bulb on or off
-    const bed = this.world.rooms.bedroom, sw = bed && bed.lampSwitch;
-    if (sw) {
-      sw.baseLight = bed.lightLevel;   // natural lit-ness without the bulb (builder + decor set this)
-      sw.ia = new Interactable(this, { id: 'lampswitch', room: bed, meshes: [sw.plate], reach: 2.6,
-        prompt: () => (sw.on ? 'Turn off the light' : 'Turn on the light'),
-        onInteract: () => {
-          sw.on = !sw.on;
-          sw.light.intensity = sw.on ? sw.base : 0;
-          sw.bulb.material.color.setHex(sw.on ? 0xffe9c2 : 0x2a2620);
-          sw.toggle.rotation.z = sw.on ? 0.28 : -0.28;
-          bed.lightLevel = sw.on ? Math.max(sw.baseLight, 0.7) : sw.baseLight;
-          game.audio.click();
-          game.hud.toast(sw.on ? 'The bulb hums to life' : 'The light goes out');
-        } });
-    }
-  }
-  fuseBoxUse(fuse) {
-    const room = this.world.rooms.cellar, fb = room.fuseBox;
-    fb.powered = true; this.inventory.removeItem(fuse); this.audio.unlock(null); this.audio.battery();
-    const lamp = this.world.addLight(room, 0xfff4d8, 2.4, 14, 0, 2.4, 0, null); fb.lamp = lamp; room.lightLevel = 0.9; room.role = this.midnight ? 'hostile' : 'safe';
-    room.flickers = room.flickers.filter(f => f.light.color.getHex() !== 0xfff0c0);
-    this.hud.toast('The cellar lights steady. It cannot follow where the lamp burns'); this.fear.add(-25);
+  // ------------------------------------------------------------------------
+  // Language: menu, options and pause pickers switch it live. Nothing restarts,
+  // and inventory, progress and the run are untouched; only the words change.
+  // ------------------------------------------------------------------------
+  initLanguage() {
+    I18N.bindPickers();
+    I18N.onChange(() => {
+      this.hud.relabel(); this.paintStance(); this.paintEndScreen();
+      this.paintPause();
+      document.getElementById('hud-seed').textContent = T('Seed') + ' ' + this.seed;
+      if (this.hud.invOpen) this.hud.renderPanel();
+      this.paintVoiceStatus();
+      if (this.micStatus) document.getElementById('mic-status-label').textContent = T(this.micStatus);
+      if (this.camStatus) document.getElementById('cam-status-label').textContent = T(this.camStatus);
+      this.lastLvl = null;
+    });
   }
 
   // ------------------------------------------------------------------------
@@ -765,15 +833,15 @@ class HorrorGame {
         if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
         const src = this.audioCtx.createMediaStreamSource(this.micStream); this.analyser = this.audioCtx.createAnalyser(); this.analyser.fftSize = 512; this.analyser.smoothingTimeConstant = 0.25; src.connect(this.analyser);
-        this.micActive = true; btnMic.classList.add('active'); document.getElementById('mic-status-label').textContent = 'Connected, live level';
-      } catch (err) { console.warn('Microphone unavailable:', err); document.getElementById('mic-status-label').textContent = 'Unavailable. Keyboard noise only'; }
+        this.micActive = true; btnMic.classList.add('active'); this.micStatus = 'Connected, live level'; document.getElementById('mic-status-label').textContent = T(this.micStatus);
+      } catch (err) { console.warn('Microphone unavailable:', err); this.micStatus = 'Unavailable. Keyboard noise only'; document.getElementById('mic-status-label').textContent = T(this.micStatus); }
     });
     btnCam.addEventListener('click', async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 480 }, height: { ideal: 360 } } });
         const v = document.getElementById('webcam-stream'); v.srcObject = stream; v.style.display = 'block'; document.getElementById('cam-fallback').style.display = 'none';
-        this.camActive = true; btnCam.classList.add('active'); document.getElementById('cam-status-label').textContent = 'Connected, night vision on';
-      } catch (err) { console.warn('Camera unavailable:', err); document.getElementById('cam-status-label').textContent = 'Unavailable. Bodycam stays offline'; }
+        this.camActive = true; btnCam.classList.add('active'); this.camStatus = 'Connected, night vision on'; document.getElementById('cam-status-label').textContent = T(this.camStatus);
+      } catch (err) { console.warn('Camera unavailable:', err); this.camStatus = 'Unavailable. Bodycam stays offline'; document.getElementById('cam-status-label').textContent = T(this.camStatus); }
     });
   }
 
@@ -803,7 +871,7 @@ class HorrorGame {
     const fill = document.getElementById('audio-fill'), mf = document.getElementById('menu-mic-fill'), st = document.getElementById('audio-status');
     fill.style.width = Math.max(4, disp) + '%'; document.getElementById('db-display').textContent = disp + ' dB'; if (mf) mf.style.width = dec + '%';
     const lvl = disp >= thr ? 'danger' : disp > thr * 0.5 ? 'caution' : 'safe';
-    if (st.dataset.level !== lvl) { st.dataset.level = lvl; st.textContent = lvl === 'danger' ? 'Too loud' : lvl === 'caution' ? 'Breathing audible' : 'Quiet'; }
+    if (st.dataset.level !== lvl || this.lastLvl !== lvl) { st.dataset.level = lvl; this.lastLvl = lvl; st.textContent = T(lvl === 'danger' ? 'Too loud' : lvl === 'caution' ? 'Breathing audible' : 'Quiet'); }
     this.micT = (this.micT || 0) - dt;
     if (dec >= thr && this.micT <= 0) { this.micT = 0.5; this.makeNoise(this.camera.position.x, this.camera.position.z, this.currentRoom, clamp(dec / 55, 0.45, 1.1), 'mic'); this.fear.add(2); }
   }
@@ -816,11 +884,14 @@ class HorrorGame {
     $('btn-play-game').addEventListener('click', () => {
       this.audio.ensure();
       this.cfg = CONFIG.difficulties[$('menu-diff').value] || CONFIG.difficulties.normal;
-      this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked, narration: $('menu-narr').checked };
+      this.readAccess();
       const typed = $('menu-seed').value.trim().toUpperCase();
       if (typed && typed !== this.seed) this.newRun(typed); else this.ghost.reset();
       this.hud.hideModal($('start-menu')); this.menu.stop();
       if (this.testMode) { this.menu.dispose(); this.beginPlaying(); return; }
+      // the story is told once: after the opening has been seen, Play goes straight into the house
+      // (this click is the gesture pointer lock needs)
+      if (StoryFlag.seen()) { this.audio.startAmbience(); this.beginPlaying(); return; }
       // Menu -> opening cutscene -> a Begin button (it supplies the click that pointer lock needs) -> the night.
       // The first time the opening cannot be skipped. After that Skip, Space or Esc work.
       this.cinema.play('opening', {
@@ -836,6 +907,35 @@ class HorrorGame {
     $('btn-retry-same').addEventListener('click', () => this.restart(true));
     $('btn-play-again').addEventListener('click', () => this.restart(false));
     $('note-modal').addEventListener('click', () => this.hud.closeNote());
+    // accessibility and voice switches apply at once (menu and pause both have them)
+    $('menu-narr').checked = this.access.narration; if ($('pause-narr')) $('pause-narr').checked = this.access.narration;
+    Voice.setEnabled(this.access.narration);
+    ['menu-flash', 'menu-scares', 'menu-subs', 'menu-narr'].forEach(id => $(id).addEventListener('change', () => this.readAccess()));
+    const pn = $('pause-narr'); if (pn) pn.addEventListener('change', () => { $('menu-narr').checked = pn.checked; this.readAccess(); });
+    const vol = $('menu-vol');
+    if (vol) vol.addEventListener('input', () => { this.audio.setVolume(Number(vol.value) / 100); });
+    // narration / characters / effects each have their own level; the browser fallback voice follows narration
+    [['menu-vnarr', 'narr'], ['menu-vchar', 'char'], ['menu-vfx', 'env']].forEach(([id, bus]) => {
+      const el = $(id); if (!el) return;
+      el.value = Math.round(Voice.vol[bus] * 100);
+      el.addEventListener('input', () => { Voice.setVolume(bus, Number(el.value) / 100); if (bus === 'narr') Narrator.volume = Voice.vol.narr; });
+    });
+    Narrator.volume = Voice.vol.narr;
+    const gfx = $('menu-gfx'); if (gfx) { gfx.value = this.quality; gfx.addEventListener('change', () => this.setQuality(gfx.value)); }
+    const fb = $('menu-vfb'); if (fb) { fb.value = Voice.fallback; fb.addEventListener('change', () => Voice.setFallback(fb.value)); }
+    Voice.onStatus(() => this.paintVoiceStatus()); this.paintVoiceStatus();
+  }
+  // The Options panel always says which voice you are getting: studio clips, or what the game fell back to
+  paintVoiceStatus() {
+    const el = document.getElementById('voice-status'); if (!el) return;
+    const s = Voice.statusInfo(); el.textContent = T(s.s, s.p); el.dataset.level = s.level;
+  }
+  readAccess() {
+    const $ = id => document.getElementById(id);
+    this.access = { reduceFlashing: $('menu-flash').checked, reduceScares: $('menu-scares').checked, subtitles: $('menu-subs').checked, narration: $('menu-narr').checked };
+    Voice.setEnabled(this.access.narration);
+    try { localStorage.setItem('silentshadows.narration.v1', this.access.narration ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    const pn = $('pause-narr'); if (pn) pn.checked = this.access.narration;
   }
 }
 

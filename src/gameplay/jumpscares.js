@@ -29,14 +29,22 @@ class Jumpscares {
     if (!this.saved) return;
     gh.scripted = false; gh.hiddenByScript = false; gh.setLayers(0); gh.group.rotation.z = 0; gh.groundY = 0; gh.dissolve = 0; gh.setPose({});
     const s = this.saved; this.saved = null;
-    // never leave it standing where the player can see it pop out of a scare
+    // One ghost: after a scare she is back exactly where she really was (never dropped into a random room).
+    // If that is in your room she gathers herself slowly out of the dark instead of popping in.
+    gh.roomId = s.room; gh.place(s.x, s.z, gh.yaw);
     if (relocate !== false) {
-      const far = ['parlor', 'kitchen', 'library', 'bedroom', 'corridor'].filter(r => r !== g.currentRoom && g.world.rooms[r].role !== 'safe');
-      gh.spawnIn(far[Math.floor(g.rand() * far.length)] || s.room);
-      gh.state = 'NONE'; gh.setState('PATROL');
+      gh.form = 0;
       if (s.state === 'DORMANT') { gh.state = 'DORMANT'; gh.dormantT = s.dormantT; }
-    } else { gh.roomId = s.room; gh.place(s.x, s.z, gh.yaw); }
+      else { gh.state = 'NONE'; gh.setState('PATROL'); }
+    }
     gh.goal = null; gh.path = []; gh.routeDoors = []; gh.dwellT = 1;
+  }
+  // Scares that show her body only happen when the real ghost is actually here or in the next room
+  // (awake), so she never appears somewhere she could not be.
+  ghostNear() {
+    const g = this.game, gh = g.ghost;
+    if (gh.state === 'DORMANT' || gh.state === 'HUNT' || gh.scripted) return false;
+    return gh.inPlayerRoom() || gh.hopsToPlayer() === 1;
   }
   inFrontOfPlayer(dist) {
     const g = this.game, cam = g.camera, f = TMP.v1.set(0, 0, -1).applyQuaternion(cam.quaternion); f.y = 0; f.normalize();
@@ -265,7 +273,9 @@ Object.assign(Jumpscares.prototype, {
     if (this.exitDone) return; this.exitDone = true;
     g.audio.rattle({ x: 0, y: 1.3, z: 12 }); g.audio.thud(null, 1); g.cameraShake(0.35); g.flickerLights(1.4);
     g.tweens.after(0.6, () => {
-      const gh = g.ghost; gh.state = 'NONE'; gh.dormantT = 0; gh.roomId = 'corridor'; gh.place(0, -2, 0); gh.setState('PATROL');
+      // she comes for you from wherever she is: no appearing in the hall out of nothing
+      const gh = g.ghost; if (gh.scripted) this.endScript(false);
+      gh.state = 'NONE'; gh.dormantT = 0; gh.setState('PATROL');
       gh.lastKnown = { room: 'corridor', x: g.camera.position.x, z: g.camera.position.z, t: g.clockT }; gh.startHunt();
       g.screenFX.glitch(0.7);
     });

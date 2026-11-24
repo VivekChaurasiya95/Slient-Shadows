@@ -62,6 +62,7 @@ const WORLD_DATA = (() => {
     { id: 'corridor_cabinet', room: 'corridor', kind: 'drawer', x: -1.8, z: 9.2, ry: PI / 2, w: 1.0, d: 0.4, h: 0.9, hint: 'in the cabinet by the front door', label: 'Open drawer' },
     { id: 'corridor_pumpkin', room: 'corridor', kind: 'search', prop: 'pumpkin', x: -1.45, z: -8.0, y: 0.32, hint: 'inside the carved grin', label: 'Search pumpkin' },
     { id: 'corridor_table',   room: 'corridor', kind: 'surface', prop: 'stand', x: 1.6, z: -7.0, y: 0.85, hint: 'on the hall table', label: 'Take' },
+    { id: 'corridor_stand',   room: 'corridor', kind: 'surface', prop: 'stand', x: -1.6, z: 1.0, y: 0.85, hint: 'beneath the hall portrait', label: 'Take' },
     // Parlor
     { id: 'parlor_ash',     room: 'parlor', kind: 'search', prop: 'ash', x: 0, z: -5.2, y: 0.12, hint: 'among the cinders', label: 'Sift ashes' },
     { id: 'parlor_pumpkin', room: 'parlor', kind: 'search', prop: 'pumpkin', x: 3.9, z: -4.8, y: 0.32, hint: 'inside the carved grin', label: 'Search pumpkin' },
@@ -87,6 +88,8 @@ const WORLD_DATA = (() => {
     { id: 'library_table',    room: 'library', kind: 'surface', prop: 'stand', x: 1.0, z: 2.0, y: 0.85, hint: 'on the reading table', label: 'Take' },
     { id: 'library_painting', room: 'library', kind: 'search', prop: 'painting', x: -3.6, z: -5.8, y: 1.7, hint: 'behind the one who watches', label: 'Move painting' },
     { id: 'library_shelf',    room: 'library', kind: 'search', prop: 'book', x: -4.55, z: 1.0, y: 1.5, hint: 'behind the book that does not belong', label: 'Pull book' },
+    // The Hollow strongbox: a three-dial combination with an electric bolt. Always holds the crypt key.
+    { id: 'library_safe',     room: 'library', kind: 'safe', x: 4.55, z: -4.6, ry: -PI / 2, w: 0.8, d: 0.7, h: 1.0, hint: 'in the Hollow strongbox', label: 'Hollow strongbox' },
     // Nursery
     { id: 'nursery_crib',      room: 'nursery', kind: 'search', prop: 'crib', x: -2.6, z: -3.9, y: 0.55, hint: 'where the little one sleeps', label: 'Search crib' },
     { id: 'nursery_toybox',    room: 'nursery', kind: 'container', lid: 'top', x: 2.6, z: -4.6, ry: 0, w: 1.0, d: 0.6, h: 0.5, hint: 'among the broken toys', label: 'Open toy box' },
@@ -175,6 +178,9 @@ const WORLD_DATA = (() => {
   // ------------------------------------------------------------------------
   // Layout generator
   // ------------------------------------------------------------------------
+  // Note text is stored as a template + parameters so the journal can show it in any language.
+  // fmt() builds the English text; the HUD rebuilds it through T() for other languages.
+  const fmt = (s, p) => s.replace(/\{(\w+)\}/g, (m, k) => (p[k] === undefined ? m : String(p[k])));
   const NOTE_FLAVOR = [
     'It walks when the clock strikes. Hold still in the dark and it passes.',
     'Salt and iron slow it. Light makes it flinch. Do not let it hear you breathe.',
@@ -184,22 +190,36 @@ const WORLD_DATA = (() => {
     'Throw something. It always goes to look.'
   ];
   const KEY_TEMPLATES = [
-    k => `I hid the ${k} ~H~. Pray no one looks.`,
-    k => `If you seek the ${k}, look ~H~.`,
-    k => `The ${k}... ~H~. Do not let it hear you.`
+    'I hid the {key} {hint}. Pray no one looks.',
+    'If you seek the {key}, look {hint}.',
+    'The {key}... {hint}. Do not let it hear you.'
   ];
   const RELIC_TEMPLATES = [
-    'The horned skull was last seen ~H~.',
-    'He carried the horned thing and set it down ~H~.',
-    'What you came for rests ~H~. Take it and run.'
+    'The horned skull was last seen {hint}.',
+    'He carried the horned thing and set it down {hint}.',
+    'What you came for rests {hint}. Take it and run.'
   ];
+  const LIAR_RELIC = 'Surely the horned skull sits {hint}. I saw it with my own eyes.';
+  const LIAR_KEY = 'The {key} must be {hint}, I am almost certain.';
+  // Three clues to the strongbox. Two are pages in the house, the third is in the kitchen maintenance locker.
+  const CLUE_TEMPLATES = [
+    'A page torn from Josiah\u2019s ledger. In red ink: the FIRST number of the strongbox is {d}.',
+    'Scratched into the back of a family photograph: SECOND number, {d}. Josiah never trusted his memory.',
+    'Caretaker\u2019s card, 1952: Strongbox THIRD number is {d}. The bolt is electric now. No mains power, no safe.'
+  ];
+  // Ritual: three offerings for the crypt altar, and three symbols whose order is marked around the house
+  const OFFERINGS = ['ritual_candle', 'ritual_salt', 'ritual_ribbon'];
+  const GLYPHS = ['moon', 'eye', 'horn'];
+  const SYMBOL_ROOMS = ['parlor', 'bedroom', 'kitchen', 'library', 'nursery', 'cellar'];
 
   function generateLayout(rng, prev) {
     prev = prev || {};
     const used = new Set();
     const items = {};
     const allRooms = new Set(ROOM_IDS);
-    const free = rooms => SPOTS.filter(s => rooms.has(s.room) && !used.has(s.id));
+    const noCrypt = new Set(ROOM_IDS.filter(r => r !== 'crypt'));
+    // the strongbox only ever holds the crypt key, so ordinary placement skips it
+    const free = rooms => SPOTS.filter(s => rooms.has(s.room) && !used.has(s.id) && s.kind !== 'safe');
     const place = (spot, item) => { used.add(spot.id); items[spot.id] = item; return spot; };
 
     // Which key opens which lock this run
@@ -207,6 +227,10 @@ const WORLD_DATA = (() => {
     const keyForSlot = {};
     LOCK_SLOTS.forEach((slot, i) => { keyForSlot[slot] = keys[i]; });
     const spareKey = keys[3];
+    const code = [rng.int(1, 10), rng.int(1, 10), rng.int(1, 10)];
+    const symbolOrder = rng.shuffle(GLYPHS);
+    const symbolRooms = rng.shuffle(SYMBOL_ROOMS).slice(0, 3);
+    const symbols = symbolOrder.map((glyph, i) => ({ glyph, n: i + 1, room: symbolRooms[i] }));
 
     // Room roles: honest, decoy, trap, safe
     const pool = rng.shuffle(['safe', 'safe', 'decoy', 'decoy', 'trap', 'trap', 'honest']);
@@ -221,22 +245,30 @@ const WORLD_DATA = (() => {
     const traps = {};
     roomList.filter(r => roles[r] === 'trap').forEach((r, i) => { traps[r] = trapKinds[i % trapKinds.length]; });
 
-    // Keys in a random chain: each key sits somewhere reachable with the earlier ones
-    const order = rng.shuffle(LOCK_SLOTS);
+    // Keys in a random chain: each key sits somewhere reachable with the earlier ones.
+    // The crypt is always the last lock: its key waits in the library strongbox, which needs
+    // mains power (cellar fuse box) and the three clues.
+    const order = rng.shuffle(LOCK_SLOTS.filter(s => s !== 'crypt')).concat(['crypt']);
     const unlocked = new Set();
     const keySpots = {};
+    const safeSpot = SPOTS.find(s => s.kind === 'safe');
     order.forEach(slot => {
       const kid = keyForSlot[slot];
-      let cands = free(reachable(unlocked)).filter(s => s.id !== (prev.keySpots || {})[kid]);
-      if (!cands.length) cands = free(reachable(unlocked));
-      const spot = place(rng.pick(cands), { id: 'key_' + kid });
+      let spot;
+      if (slot === 'crypt') spot = place(safeSpot, { id: 'key_' + kid });
+      else {
+        let cands = free(reachable(unlocked)).filter(s => s.id !== (prev.keySpots || {})[kid]);
+        if (!cands.length) cands = free(reachable(unlocked));
+        spot = place(rng.pick(cands), { id: 'key_' + kid });
+      }
       keySpots[kid] = spot.id;
       unlocked.add(slot);
     });
 
-    // Relic: any spot once everything is open. Never the same spot twice in a row.
-    let relicCands = free(allRooms).filter(s => s.id !== prev.relicSpot);
-    const relicSpot = rng.weighted(relicCands, s => (s.room === 'crypt' ? 3 : (s.room === 'cellar' || s.room === 'nursery') ? 2.2 : 1));
+    // Relic: it rests in the family crypt, behind the seal. Never the same spot twice in a row.
+    let relicCands = free(new Set(['crypt'])).filter(s => s.id !== prev.relicSpot);
+    if (!relicCands.length) relicCands = free(new Set(['crypt']));
+    const relicSpot = rng.weighted(relicCands, s => (s.id === 'crypt_altar' ? 1.6 : 1));
     place(relicSpot, { id: 'relic' });
 
     // Spare key, mimics
@@ -247,71 +279,92 @@ const WORLD_DATA = (() => {
     place(pickAny(decoyFree()), { id: 'fake_key' });
     place(pickAny(decoyFree()), { id: 'fake_relic' });
 
-    // Tools, batteries (favour safe rooms), junk
+    // Tools. The fuse and the crowbar are needed before the crypt opens, so never inside it.
     const safeRooms = new Set(roomList.filter(r => roles[r] === 'safe'));
     const tools = rng.shuffle(['lighter', 'crucifix', 'musicbox', 'mirror', 'fuse', 'locket']);
-    tools.forEach(t => place(pickAny(free(allRooms)), { id: t }));
-    for (let i = 0; i < 4; i++) {
+    tools.forEach(t => place(pickAny(free(t === 'fuse' ? noCrypt : allRooms)), { id: t }));
+    // Weapons and ammunition. The crowbar opens the kitchen maintenance locker (third clue).
+    place(pickAny(free(reachable(new Set()))), { id: 'crowbar' });
+    ['bat', 'flaregun', 'pistol'].forEach(w => place(pickAny(free(noCrypt)), { id: w }));
+    ['flare_ammo', 'pistol_ammo'].forEach(a => place(pickAny(free(allRooms)), { id: a }));
+    // Ritual offerings for the crypt altar
+    rng.shuffle(OFFERINGS).forEach(o => place(pickAny(free(noCrypt)), { id: o }));
+    // Batteries (favour safe rooms), junk to throw
+    for (let i = 0; i < 3; i++) {
       const c = free(safeRooms);
       place(pickAny(i < 2 ? c : free(allRooms)), { id: 'battery' });
     }
-    ['doll', 'doll', 'coins', 'coins'].forEach(j => place(pickAny(free(allRooms)), { id: j }));
+    ['doll', 'coins'].forEach(j => place(pickAny(free(allRooms)), { id: j }));
 
-    // Notes: truthful ones for each key and the relic, a few liars, a few flavour pages
+    // Notes: truthful ones for each key and the relic, two clues to the strongbox, a liar, a flavour page
     const startRooms = reachable(new Set());
     const hintOf = id => SPOTS.find(s => s.id === id).hint;
     const notes = [];
-    const addNote = (text, truthful, about) => {
-      const c = free(startRooms);
-      const spot = place(pickAny(c), { id: 'note', text, truthful, about });
+    const addNote = (s, p, truthful, about, extra) => {
+      // start rooms first; if they are full, anywhere outside the crypt (a clue in the crypt would lock its own key away)
+      let c = free(startRooms); if (!c.length) c = free(noCrypt);
+      const text = fmt(s, p.key ? Object.assign({}, p, { key: KEY_NAMES[p.key].toLowerCase(), hint: p.spot ? hintOf(p.spot) : p.hint }) : Object.assign({}, p, { hint: p.spot ? hintOf(p.spot) : p.hint }));
+      const spot = place(pickAny(c), Object.assign({ id: 'note', text, truthful, about, tpl: { s, key: p.key, spot: p.spot, d: p.d } }, extra || {}));
       notes.push({ spotId: spot.id, text, truthful, about });
     };
+    [0, 1].forEach(i => addNote(CLUE_TEMPLATES[i], { d: code[i] }, true, 'clue', { clue: { n: i, d: code[i] } }));
     LOCK_SLOTS.forEach(slot => {
       const kid = keyForSlot[slot];
-      addNote(rng.pick(KEY_TEMPLATES)(KEY_NAMES[kid].toLowerCase()).replace('~H~', hintOf(keySpots[kid])), true, kid);
+      addNote(rng.pick(KEY_TEMPLATES), { key: kid, spot: keySpots[kid] }, true, kid);
     });
-    addNote(rng.pick(RELIC_TEMPLATES).replace('~H~', hintOf(relicSpot.id)), true, 'relic');
-    for (let i = 0; i < 3; i++) {
-      const wrong = rng.pick(SPOTS.filter(s => s.id !== relicSpot.id && s.id !== keySpots[keyForSlot.crypt]));
-      const what = i === 0 ? 'horned skull' : KEY_NAMES[keyForSlot[LOCK_SLOTS[i - 1]]].toLowerCase();
-      const text = i === 0 ? `Surely the horned skull sits ${wrong.hint}. I saw it with my own eyes.`
-        : `The ${what} must be ${wrong.hint}, I am almost certain.`;
-      addNote(text, false, what);
+    addNote(rng.pick(RELIC_TEMPLATES), { spot: relicSpot.id }, true, 'relic');
+    {
+      const wrong = rng.pick(SPOTS.filter(s => s.room !== 'crypt' && s.kind !== 'safe'));
+      addNote(LIAR_RELIC, { spot: wrong.id }, false, 'horned skull');
     }
-    rng.shuffle(NOTE_FLAVOR).slice(0, 2).forEach(t => addNote(t, true, 'lore'));
+    rng.shuffle(NOTE_FLAVOR).slice(0, 1).forEach(t => addNote(t, {}, true, 'lore'));
+    // the third clue is not in a spot: it waits in the kitchen maintenance locker (needs the crowbar)
+    const lockerNote = { id: 'note', text: fmt(CLUE_TEMPLATES[2], { d: code[2] }), truthful: true, about: 'clue', tpl: { s: CLUE_TEMPLATES[2], d: code[2] }, clue: { n: 2, d: code[2] } };
 
     // Hiding spots: six honest ones plus one that is a trap
     const hideOrder = rng.shuffle(HIDES.map(h => h.id));
     const hides = hideOrder.slice(0, 6);
     const fakeHide = hideOrder[6];
 
-    return { seed: rng.seed, keyForSlot, spareKey, roles, traps, items, notes, keySpots, relicSpot: relicSpot.id, hides, fakeHide, order };
+    return { seed: rng.seed, keyForSlot, spareKey, roles, traps, items, notes, keySpots, relicSpot: relicSpot.id, hides, fakeHide, order, code, symbols, lockerNote, safeSpot: safeSpot.id };
   }
 
-  // Simulate a perfect player: collect everything reachable, open every lock the
-  // keys allow, repeat. The run is solvable when the relic ends up reachable.
+  // Simulate a perfect player: collect everything reachable, open every lock and puzzle
+  // the collected things allow, repeat. Gates modelled here:
+  //   fuse box (cellar + fuse) -> mains power
+  //   crowbar -> kitchen maintenance locker -> third clue
+  //   power + all three clues -> strongbox -> crypt key
+  //   crypt + three offerings -> ritual -> the skull can be taken
   function validate(layout) {
     const unlocked = new Set();
     const have = new Set();
-    let changed = true;
+    let power = false, locker = false, safe = false, changed = true;
+    const take = id => { if (!have.has(id)) { have.add(id); changed = true; } };
     while (changed) {
       changed = false;
       const rooms = reachable(unlocked);
       SPOTS.forEach(s => {
         const it = layout.items[s.id];
-        if (it && rooms.has(s.room) && it.id.indexOf('key_') === 0 && !have.has(it.id)) { have.add(it.id); changed = true; }
+        if (!it || !rooms.has(s.room)) return;
+        if (s.kind === 'safe' && !safe) return;
+        take(it.id === 'note' && it.clue ? 'clue' + it.clue.n : it.id);
       });
+      if (!power && rooms.has('cellar') && have.has('fuse')) { power = true; changed = true; }
+      if (!locker && rooms.has('kitchen') && have.has('crowbar')) { locker = true; changed = true; take('clue2'); }
+      if (!safe && power && rooms.has('library') && have.has('clue0') && have.has('clue1') && have.has('clue2')) { safe = true; changed = true; }
       LOCK_SLOTS.forEach(slot => {
         if (!unlocked.has(slot) && have.has('key_' + layout.keyForSlot[slot])) { unlocked.add(slot); changed = true; }
       });
     }
     const rooms = reachable(unlocked);
     const relic = SPOTS.find(s => s.id === layout.relicSpot);
-    const ok = rooms.has(relic.room) && unlocked.size === LOCK_SLOTS.length;
-    return { ok, unlocked: Array.from(unlocked), rooms: Array.from(rooms) };
+    const ritual = rooms.has('crypt') && OFFERINGS.every(o => have.has(o));
+    const ok = rooms.has(relic.room) && unlocked.size === LOCK_SLOTS.length && power && safe && ritual;
+    return { ok, unlocked: Array.from(unlocked), rooms: Array.from(rooms), power, locker, safe, ritual };
   }
 
-  return { ROOMS, ROOM_IDS, DOORS, SPOTS, HIDES, LOCK_SLOTS, KEY_IDS, KEY_NAMES, doorById, reachable, roomPath, passable, generateLayout, validate };
+  const NOTE_TEXTS = [].concat(NOTE_FLAVOR, KEY_TEMPLATES, RELIC_TEMPLATES, [LIAR_RELIC, LIAR_KEY], CLUE_TEMPLATES);
+  return { ROOMS, ROOM_IDS, DOORS, SPOTS, HIDES, LOCK_SLOTS, KEY_IDS, KEY_NAMES, OFFERINGS, GLYPHS, CLUE_TEMPLATES, NOTE_TEXTS, doorById, reachable, roomPath, passable, generateLayout, validate };
 })();
 
 if (typeof module !== 'undefined') module.exports = WORLD_DATA;

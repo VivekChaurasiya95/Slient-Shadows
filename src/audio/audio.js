@@ -33,13 +33,18 @@ class AudioEngine {
 
   build() {
     const c = this.ctx;
-    this.master = c.createGain(); this.master.gain.value = 0.9;
+    this.master = c.createGain(); this.master.gain.value = 0.9 * (this.volume === undefined ? 1 : this.volume);
     this.comp = c.createDynamicsCompressor();
     this.comp.threshold.value = -14; this.comp.ratio.value = 6;
     this.master.connect(this.comp); this.comp.connect(c.destination);
 
-    this.sfxBus = c.createGain(); this.sfxBus.gain.value = 1;
+    // Four independent levels: narration, characters, and "effects" (sfxBus + everything ambient)
+    const lv = k => (this[k] === undefined ? 1 : this[k]);
+    this.sfxBus = c.createGain(); this.sfxBus.gain.value = lv('envVol');
     this.sfxBus.connect(this.master);
+    this.envBus = c.createGain(); this.envBus.gain.value = lv('envVol'); this.envBus.connect(this.master);
+    this.narrBus = c.createGain(); this.narrBus.gain.value = lv('narrVol'); this.narrBus.connect(this.master);
+    this.charBus = c.createGain(); this.charBus.gain.value = lv('charVol'); this.charBus.connect(this.master);
     this.reverb = c.createConvolver();
     this.reverb.buffer = this.makeImpulse(2.6, 2.4);
     this.revLP = c.createBiquadFilter(); this.revLP.type = 'lowpass'; this.revLP.frequency.value = 2400;
@@ -160,7 +165,7 @@ class AudioEngine {
   buildAmbience() {
     const c = this.ctx;
     this.amb = c.createGain(); this.amb.gain.value = 0;
-    this.amb.connect(this.master);
+    this.amb.connect(this.envBus);
     const ambSend = c.createGain(); ambSend.gain.value = 0.4;
     this.amb.connect(ambSend); ambSend.connect(this.reverb);
 
@@ -184,7 +189,7 @@ class AudioEngine {
     wind.connect(wf); wf.connect(this.windGain); this.windGain.connect(this.amb); wind.start();
 
     // Chase theme: pulsing sub bass + dissonant high drone, silent until needed
-    this.chaseGain = c.createGain(); this.chaseGain.gain.value = 0; this.chaseGain.connect(this.master);
+    this.chaseGain = c.createGain(); this.chaseGain.gain.value = 0; this.chaseGain.connect(this.envBus);
     const sub = c.createOscillator(); sub.type = 'sine'; sub.frequency.value = 55;
     const pulse = c.createGain(); pulse.gain.value = 0.5;
     const pl = c.createOscillator(); pl.type = 'square'; pl.frequency.value = 2.4;
@@ -206,12 +211,12 @@ class AudioEngine {
     const bm = c.createGain(); bm.gain.value = 0.5; blg.connect(bm.gain);
     br.connect(bf); bf.connect(bm); bm.connect(this.breathGain);
     this.breathPan = c.createStereoPanner ? c.createStereoPanner() : null;
-    if (this.breathPan) { this.breathGain.connect(this.breathPan); this.breathPan.connect(this.master); } else this.breathGain.connect(this.master);
+    if (this.breathPan) { this.breathGain.connect(this.breathPan); this.breathPan.connect(this.envBus); } else this.breathGain.connect(this.envBus);
     br.start(); bl.start();
     const st = c.createBufferSource(); st.buffer = this.noiseBuf; st.loop = true;
     const sf = c.createBiquadFilter(); sf.type = 'highpass'; sf.frequency.value = 3500;
     this.staticGain = c.createGain(); this.staticGain.gain.value = 0;
-    st.connect(sf); sf.connect(this.staticGain); this.staticGain.connect(this.master); st.start();
+    st.connect(sf); sf.connect(this.staticGain); this.staticGain.connect(this.envBus); st.start();
   }
 
   startAmbience() {
@@ -414,6 +419,45 @@ class AudioEngine {
     this.thud(null, 0.5);
   }
   stun() { this.tone({ type: 'sawtooth', f0: 600, f1: 90, dur: 0.7, gain: 0.35, lp: 2200 }); this.noise({ filter: 'highpass', f0: 2500, dur: 0.4, gain: 0.35 }); this.say('[The apparition recoils]'); }
+  ghostRecover(pos) { this.tone({ type: 'sawtooth', f0: 70, f1: 140, dur: 1.1, gain: 0.25, lp: 700, atk: 0.3, pos }); this.noise({ filter: 'bandpass', f0: 500, f1: 900, q: 1.2, dur: 0.9, gain: 0.15, atk: 0.3, pink: true, pos }); this.say('[It gathers itself]'); }
+  setVolume(v) { this.volume = v; if (this.ready) this.master.gain.setTargetAtTime(0.9 * v, this.ctx.currentTime, 0.05); }
+  // name: 'narr' (narrator), 'char' (characters), 'env' (sound effects and ambience)
+  setBusVolume(name, v) {
+    this[name + 'Vol'] = v; if (!this.ready) return;
+    const t = this.ctx.currentTime, set = n => n.gain.setTargetAtTime(v, t, 0.05);
+    if (name === 'env') { set(this.sfxBus); set(this.envBus); } else set(name === 'narr' ? this.narrBus : this.charBus);
+  }
+
+  // ---- electricity ----------------------------------------------------------
+  switchClick(pos) { this.tone({ type: 'square', f0: 1900, f1: 1200, dur: 0.025, gain: 0.09, pos }); this.noise({ filter: 'highpass', f0: 3500, dur: 0.03, gain: 0.08, pos }); this.tone({ type: 'sine', f0: 240, f1: 120, dur: 0.05, gain: 0.08, delay: 0.01, pos }); }
+  bulbOn(pos) { this.tone({ type: 'sawtooth', f0: 100, dur: 0.35, gain: 0.03, lp: 500, pos }); this.noise({ filter: 'bandpass', f0: 6000, q: 4, dur: 0.06, gain: 0.04, pos }); }
+  buzz(pos, dur) { const d = dur || 1; this.tone({ type: 'sawtooth', f0: 120, f1: 118, dur: d, gain: 0.07, lp: 900, atk: 0.05, pos }); this.tone({ type: 'square', f0: 60, dur: d, gain: 0.03, lp: 400, atk: 0.05, pos }); for (let i = 0; i < 4; i++) this.noise({ filter: 'highpass', f0: 4500, dur: 0.03, gain: 0.06, delay: Math.random() * d, pos }); this.say('[Electrical buzzing]'); }
+  spark(pos) { for (let i = 0; i < 5; i++) this.noise({ filter: 'highpass', f0: 3000 + Math.random() * 3000, dur: 0.025, gain: 0.12, delay: i * 0.03 + Math.random() * 0.03, pos }); this.tone({ type: 'square', f0: 2400, f1: 800, dur: 0.05, gain: 0.05, pos }); }
+  fuseInstall(pos) { this.tone({ type: 'square', f0: 900, f1: 600, dur: 0.05, gain: 0.08, pos }); this.tone({ type: 'sine', f0: 180, f1: 90, dur: 0.18, gain: 0.25, delay: 0.06, pos }); this.noise({ filter: 'lowpass', f0: 900, dur: 0.12, gain: 0.15, delay: 0.06, pos }); this.spark(pos); }
+  powerUp() { this.tone({ type: 'sawtooth', f0: 40, f1: 120, dur: 1.6, gain: 0.22, lp: 600, atk: 0.4 }); this.tone({ type: 'sine', f0: 60, f1: 120, dur: 1.8, gain: 0.18, atk: 0.5 }); this.say('[The house hums with power]'); }
+
+  // ---- weapons ----------------------------------------------------------------
+  whoosh(weight) { const w = weight || 1; this.noise({ filter: 'bandpass', f0: 700 * w, f1: 2200 * w, q: 0.9, dur: 0.22, gain: 0.22, atk: 0.04, pink: true }); }
+  batHit(pos) { this.tone({ type: 'sine', f0: 160, f1: 60, dur: 0.25, gain: 0.55, pos }); this.noise({ filter: 'bandpass', f0: 1100, q: 1, dur: 0.12, gain: 0.45, pos }); this.tone({ type: 'triangle', f0: 420, f1: 300, dur: 0.12, gain: 0.15, pos }); }
+  crowbarHit(pos) { this.tone({ type: 'triangle', f0: 1900, f1: 1700, dur: 0.6, gain: 0.12, pos }); this.tone({ type: 'sine', f0: 3100, dur: 0.45, gain: 0.06, pos }); this.tone({ type: 'sine', f0: 140, f1: 60, dur: 0.2, gain: 0.45, pos }); this.noise({ filter: 'highpass', f0: 2500, dur: 0.08, gain: 0.3, pos }); }
+  crowbarPry(pos) { this.noise({ filter: 'bandpass', f0: 2600, f1: 1400, q: 6, dur: 0.6, gain: 0.25, atk: 0.1, pos }); this.tone({ type: 'sawtooth', f0: 900, f1: 1500, dur: 0.5, gain: 0.08, lp: 3000, pos }); for (let i = 0; i < 3; i++) this.noise({ filter: 'lowpass', f0: 900, dur: 0.1, gain: 0.3, delay: 0.5 + i * 0.18, pos }); this.say('[Nails shriek out of wood]'); }
+  splinter() { this.noise({ filter: 'bandpass', f0: 1800, q: 0.8, dur: 0.35, gain: 0.4 }); for (let i = 0; i < 6; i++) this.noise({ filter: 'highpass', f0: 2500, dur: 0.03, gain: 0.15, delay: Math.random() * 0.25 }); this.say('[Wood splinters]'); }
+  dryFire() { this.tone({ type: 'square', f0: 2600, f1: 2000, dur: 0.02, gain: 0.08 }); this.noise({ filter: 'highpass', f0: 4000, dur: 0.02, gain: 0.06 }); }
+  flareFire() { this.tone({ type: 'sine', f0: 180, f1: 50, dur: 0.3, gain: 0.5 }); this.noise({ filter: 'bandpass', f0: 1500, f1: 400, q: 0.8, dur: 0.5, gain: 0.45 }); this.noise({ filter: 'highpass', f0: 3500, dur: 2.0, gain: 0.06, atk: 0.2, delay: 0.15 }); this.say('[A flare hisses]'); }
+  flareHiss(pos) { this.noise({ filter: 'highpass', f0: 2800, dur: 1.2, gain: 0.18, atk: 0.05, pos }); this.tone({ type: 'sawtooth', f0: 900, f1: 120, dur: 0.8, gain: 0.25, lp: 2500, pos }); this.say('[She shrieks at the light]'); }
+  pistolFire() { this.tone({ type: 'sine', f0: 140, f1: 40, dur: 0.35, gain: 0.8 }); this.noise({ filter: 'lowpass', f0: 3500, f1: 400, dur: 0.4, gain: 0.85 }); this.noise({ filter: 'highpass', f0: 2500, dur: 0.06, gain: 0.6 }); this.tone({ type: 'square', f0: 1700, f1: 900, dur: 0.03, gain: 0.08, delay: 0.25 }); this.say('[A gunshot]'); }
+  bulletHit(pos) { this.tone({ type: 'sawtooth', f0: 1200, f1: 200, dur: 0.5, gain: 0.3, lp: 3200, pos }); this.noise({ filter: 'bandpass', f0: 900, q: 1.5, dur: 0.3, gain: 0.3, pos }); }
+  ammo() { this.tone({ type: 'square', f0: 1500, dur: 0.03, gain: 0.06 }); this.tone({ type: 'square', f0: 1100, dur: 0.03, gain: 0.06, delay: 0.06 }); this.noise({ filter: 'highpass', f0: 3000, dur: 0.05, gain: 0.05, delay: 0.03 }); }
+  weaponPickup() { this.tone({ type: 'sine', f0: 110, f1: 80, dur: 0.3, gain: 0.25 }); this.noise({ filter: 'bandpass', f0: 1200, q: 1, dur: 0.15, gain: 0.15 }); this.tone({ type: 'triangle', f0: 330, dur: 0.4, gain: 0.05, delay: 0.1 }); }
+
+  // ---- puzzles ------------------------------------------------------------------
+  puzzle() { [392, 523, 659].forEach((f, i) => this.tone({ type: 'sine', f0: f, dur: 0.6, gain: 0.07, delay: i * 0.09, atk: 0.02 })); }
+  dialClick(pos) { this.tone({ type: 'square', f0: 2200, f1: 1800, dur: 0.015, gain: 0.07, pos }); this.noise({ filter: 'highpass', f0: 5000, dur: 0.015, gain: 0.05, pos }); }
+  boltOpen(pos) { this.tone({ type: 'sawtooth', f0: 80, f1: 160, dur: 0.25, gain: 0.15, lp: 800, pos }); this.tone({ type: 'sine', f0: 140, f1: 50, dur: 0.35, gain: 0.5, delay: 0.22, pos }); this.noise({ filter: 'lowpass', f0: 1200, dur: 0.2, gain: 0.3, delay: 0.22, pos }); this.say('[A heavy bolt slams back]'); }
+  ritualPlace(pos) { this.tone({ type: 'sine', f0: 220, dur: 2.2, gain: 0.08, atk: 0.3, pos }); this.tone({ type: 'sine', f0: 330, dur: 2.0, gain: 0.05, atk: 0.4, delay: 0.1, pos }); this.noise({ filter: 'lowpass', f0: 400, dur: 0.2, gain: 0.12, pos }); }
+  stoneClick(pos) { this.tone({ type: 'sine', f0: 120, f1: 70, dur: 0.18, gain: 0.35, pos }); this.noise({ filter: 'bandpass', f0: 700, q: 1.5, dur: 0.12, gain: 0.25, pos }); }
+  ritualFail() { this.tone({ type: 'sawtooth', f0: 220, f1: 110, dur: 1.2, gain: 0.25, lp: 1200 }); this.tone({ type: 'sawtooth', f0: 233, f1: 116, dur: 1.2, gain: 0.2, lp: 1200 }); this.say('[The stones grind and go dark]'); }
+  ritualDone() { [65, 98, 131, 196].forEach((f, i) => this.tone({ type: 'sine', f0: f, dur: 5, gain: 0.16, atk: 0.4 + i * 0.1 })); this.noise({ filter: 'lowpass', f0: 600, f1: 120, dur: 3, gain: 0.5, atk: 0.2, pink: true }); this.say('[The seal breaks]'); }
 
   // Rain on a roof: looping noise. level 0 stops it. Used by the menu and the cutscenes.
   rainOn(level) {

@@ -9,10 +9,27 @@
 const CONFIG = {
   version: '2.0',
   difficulties: {
-    easy:      { label: 'Easy',      walk: 1.45, hunt: 3.5, hearing: 0.85, sight: 11, aggression: 0.65, fearGain: 0.7,  scareRate: 0.75, stun: 2.6, peekKill: 0.35, drain: 0.7 },
-    normal:    { label: 'Normal',    walk: 1.75, hunt: 4.1, hearing: 1.0,  sight: 14, aggression: 1.0,  fearGain: 1.0,  scareRate: 1.0,  stun: 2.0, peekKill: 0.55, drain: 1.0 },
-    nightmare: { label: 'Nightmare', walk: 2.1,  hunt: 4.9, hearing: 1.3,  sight: 17, aggression: 1.5,  fearGain: 1.3,  scareRate: 1.35, stun: 1.3, peekKill: 0.8,  drain: 1.35 }
+    // w: weapon balance. Stun / repel seconds, bat hits before it breaks, ammo a gun comes loaded with,
+    // ammo per pickup (+/-), melee reach in metres, extra aim forgiveness for the pistol.
+    easy:      { label: 'Easy',      walk: 1.45, hunt: 3.5, hearing: 0.85, sight: 11, aggression: 0.65, fearGain: 0.7,  scareRate: 0.75, stun: 2.6, peekKill: 0.35, drain: 0.7,
+      w: { batStun: 3.4, batHits: 8, crowRepel: 6.0, flareStart: 3, flareRepel: 7.0, pistolStart: 3, pistolStun: 5.0, ammoBonus: 1, reach: 2.6, aimBonus: 0.15 } },
+    normal:    { label: 'Normal',    walk: 1.75, hunt: 4.1, hearing: 1.0,  sight: 14, aggression: 1.0,  fearGain: 1.0,  scareRate: 1.0,  stun: 2.0, peekKill: 0.55, drain: 1.0,
+      w: { batStun: 2.6, batHits: 5, crowRepel: 4.5, flareStart: 2, flareRepel: 5.5, pistolStart: 2, pistolStun: 3.8, ammoBonus: 0, reach: 2.3, aimBonus: 0.05 } },
+    nightmare: { label: 'Nightmare', walk: 2.1,  hunt: 4.9, hearing: 1.3,  sight: 17, aggression: 1.5,  fearGain: 1.3,  scareRate: 1.35, stun: 1.3, peekKill: 0.8,  drain: 1.35,
+      w: { batStun: 1.8, batHits: 4, crowRepel: 3.2, flareStart: 1, flareRepel: 4.0, pistolStart: 1, pistolStun: 2.6, ammoBonus: -1, reach: 2.1, aimBonus: 0 } }
   },
+  // Weapon timing. swing = strike time, recover = follow-through. Noise is what she hears.
+  // resist: every hit makes the next one weaker for a while, so she can never be stun-locked.
+  weapons: {
+    bat:      { cooldown: 0.95, swing: 0.32, recover: 0.38, noise: 0.42 },
+    crowbar:  { cooldown: 1.35, swing: 0.5,  recover: 0.45, noise: 0.48 },
+    flaregun: { cooldown: 1.6, speed: 15, burn: 14, radius: 3.4, noise: 0.55 },
+    // a gunshot carries through closed doors: from the next room she comes to look, in the same room she hunts
+    pistol:   { cooldown: 0.7, range: 18, radius: 0.42, noise: 2.2, swing: 0.2 },
+    resist:   { gain: 0.22, max: 0.6, decay: 0.01, min: 1.0 }
+  },
+  // Light: she moves slower hunting under a lit bulb, but she sees you from further away
+  light: { huntSlow: 0.85, sightBoost: 1.2, patrolAvoid: 0.6 },
   // Sprint costs stamina: about 5 seconds at full speed, then you are winded until it refills
   player: { walk: 3.4, sprint: 5.8, crouch: 1.7, radius: 0.35, eye: 1.7, crouchEye: 1.1, fov: 72, sprintFov: 78, sprintDrain: 0.2, sprintRegen: 0.13, sprintDelay: 1.4, sprintMin: 0.3 },
   // A chase speeds up: after huntRamp seconds in HUNT the ghost is up to +50% faster
@@ -34,7 +51,7 @@ const CONFIG = {
   micThresholdHidden: 18,
   interact: { reach: 2.9, holdSlow: 0.28 },
   stageSeconds: [225, 540, 900],   // 25%, 60% and 100% of the way to midnight
-  inventorySlots: 6
+  inventorySlots: 8
 };
 
 // --------------------------------------------------------------------------
@@ -199,6 +216,17 @@ const Cache = {
     return t;
   }
 };
+
+// A soft round dot for particle points (dust, smoke), shared and cached
+function softDot() {
+  return Cache.tex('tex.softdot', () => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  });
+}
 
 // Reusable temporaries for update loops
 const TMP = {};

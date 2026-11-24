@@ -4,13 +4,18 @@
 // ==========================================================================
 class TextureLab {
   constructor(renderer) {
-    this.aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    // full anisotropic filtering: floors and walls stay sharp at grazing angles
+    this.aniso = renderer.capabilities.getMaxAnisotropy();
     this.rep = {};
   }
+  // Every texture is painted at twice its design size (max 1024 px) for sharper surfaces.
+  // The draw code still works in design units: the canvas is scaled, so the look is the same, only crisper.
   make(key, size, draw, w, h) {
     return Cache.tex(key, () => {
-      const c = document.createElement('canvas'); c.width = size; c.height = h || size;
-      draw(c.getContext('2d'), size, h || size);
+      const hh = h || size, k = Math.max(size, hh) <= 512 ? 2 : 1;
+      const c = document.createElement('canvas'); c.width = size * k; c.height = hh * k;
+      const g = c.getContext('2d'); g.scale(k, k);
+      draw(g, size, hh);
       const t = new THREE.CanvasTexture(c);
       t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = this.aniso;
       return t;

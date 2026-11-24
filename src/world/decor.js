@@ -267,7 +267,7 @@ Object.assign(World.prototype, {
   addMirror(room, x, y, z, ry, w, h) {
     const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; room.group.add(g);
     const game = this.game;
-    const rt = Cache.tex('mirror.rt', () => { const t = new THREE.WebGLRenderTarget(320, 384, { format: THREE.RGBFormat }); t.userData = { cached: true }; t.texture.userData = { cached: true }; return t; });
+    const rt = Cache.tex('mirror.rt', () => { const t = new THREE.WebGLRenderTarget(560, 672, { format: THREE.RGBFormat, generateMipmaps: false, minFilter: THREE.LinearFilter }); t.userData = { cached: true }; t.texture.userData = { cached: true }; return t; });
     const uniforms = { tDiffuse: { value: rt.texture }, textureMatrix: { value: new THREE.Matrix4() }, tint: { value: new THREE.Color(0.75, 0.8, 0.85) } };
     const mat = new THREE.ShaderMaterial({
       uniforms, fog: false,

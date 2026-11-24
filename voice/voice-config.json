@@ -1,0 +1,41 @@
+{
+  "_readme": "Voice pack settings. Voice ids are not secrets and are safe to commit; API keys are NOT stored here (use .env). Find voices with: node tools/voice-gen.js voices --gender female --accent indian --lang hi  and audition them with: node tools/voice-gen.js audition",
+  "provider": "elevenlabs",
+
+  "elevenlabs": {
+    "model": "eleven_v3",
+    "outputFormat": "mp3_44100_128",
+    "similarity": 0.8,
+    "speakerBoost": true
+  },
+
+  "azure": {
+    "_note": "Azure Neural voices (e.g. en-IN-NeerjaNeural, hi-IN-SwaraNeural). Styles are emulated with speaking rate, pitch and volume only.",
+    "outputFormat": "audio-24khz-96kbitrate-mono-mp3",
+    "kbps": 96
+  },
+
+  "voices": {
+    "_note": "A string works for both languages; use {\"en\": \"...\", \"hi\": \"...\"} for different voices per language. Missing characters borrow from: ELSPETH<-NARRATOR, THOMAS<-ELSPETH, ROWAN/JOSIAH/DR. VENN<-DACRE, MARGARET<-NARRATOR. NARRATOR and DACRE are required.",
+    "NARRATOR": { "en": "", "hi": "" },
+    "ELSPETH": "",
+    "DACRE": { "en": "", "hi": "" },
+    "ROWAN": "",
+    "JOSIAH": "",
+    "THOMAS": "",
+    "DR. VENN": "",
+    "MARGARET": ""
+  },
+
+  "styles": {
+    "_note": "stability: creative (most emotional range) | natural | robust (most even). style: 0..1 exaggeration. speed: 0.7..1.2. tag: an audio tag for Eleven v3/v4 (ignored for other models). Edit these after listening to the audition clips. azure.* are used only with the azure provider.",
+    "narration": { "stability": "natural",  "style": 0.25, "speed": 0.97, "tag": "",            "azure": { "rate": "-4%",  "pitch": "-1%", "volume": "medium" } },
+    "normal":    { "stability": "natural",  "style": 0.20, "speed": 1.00, "tag": "",            "azure": { "rate": "0%",   "pitch": "0%",  "volume": "medium" } },
+    "whisper":   { "stability": "natural",  "style": 0.35, "speed": 0.92, "tag": "[whispers]",  "azure": { "rate": "-12%", "pitch": "-3%", "volume": "x-soft" } },
+    "fear":      { "stability": "creative", "style": 0.45, "speed": 1.00, "tag": "[worried]",   "azure": { "rate": "+2%",  "pitch": "+3%", "volume": "soft" } },
+    "suspense":  { "stability": "natural",  "style": 0.30, "speed": 0.88, "tag": "",            "azure": { "rate": "-14%", "pitch": "-2%", "volume": "soft" } },
+    "urgency":   { "stability": "creative", "style": 0.50, "speed": 1.12, "tag": "",            "azure": { "rate": "+14%", "pitch": "+2%", "volume": "loud" } },
+    "distress":  { "stability": "creative", "style": 0.60, "speed": 0.95, "tag": "[worried]",   "azure": { "rate": "-6%",  "pitch": "+4%", "volume": "soft" } },
+    "warning":   { "stability": "robust",   "style": 0.20, "speed": 0.90, "tag": "",            "azure": { "rate": "-10%", "pitch": "-4%", "volume": "soft" } }
+  }
+}

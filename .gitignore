@@ -1,0 +1,9 @@
+# API keys and local secrets: never commit these
+.env
+.env.*
+!.env.example
+
+# scratch output from the voice tools (the shipped voice pack is assets/voice/)
+voice/audition/
+voice/cache/
+node_modules/
